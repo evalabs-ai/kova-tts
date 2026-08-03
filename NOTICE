@@ -1,0 +1,27 @@
+Kova TTS
+Copyright (c) 2026 Eva Labs
+
+This product includes software developed by Eva Labs.
+
+Third-party components
+----------------------
+
+The language model backbone is derived from Meta's Llama 3.2 and remains subject to the
+Llama 3.2 Community License Agreement:
+https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/LICENSE
+
+The codec's semantic encoder uses WavLM-large (Microsoft, MIT License):
+https://huggingface.co/microsoft/wavlm-large
+
+The codec architecture derives from BigCodec:
+https://github.com/Aria-K-Alethia/BigCodec
+
+Alias-free activation and resampling modules derive from BigVGAN (NVIDIA, MIT License):
+https://github.com/NVIDIA/BigVGAN
+
+By way of BigVGAN, those modules also derive from:
+  alias-free-torch (Apache License 2.0)  https://github.com/junjun3518/alias-free-torch
+  snake (MIT License)                    https://github.com/EdwardDixon/snake
+
+This NOTICE records attribution only. It grants no license to anything in this repository;
+see LICENSE and LICENSE-WEIGHTS, both of which are placeholders.

@@ -1,0 +1,76 @@
+site_name: Kova TTS
+site_description: Expressive text-to-speech with voice cloning, LoRA finetuning, and a local server.
+repo_url: https://github.com/evalabs-ai/kova-tts
+repo_name: evalabs-ai/kova-tts
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - content.code.copy
+    - content.action.edit
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: installation.md
+      - Quickstart: quickstart.md
+      - Voice cloning: voice-cloning.md
+  - Interfaces:
+      - Python API: python-api.md
+      - Command line: cli.md
+      - Server: server.md
+      - Demo: demo.md
+      - ComfyUI: comfyui.md
+  - Training:
+      - Dataset preparation: dataset-preparation.md
+      - Finetuning: finetuning.md
+  - Reference:
+      - Architecture: architecture.md
+      - Docker: docker.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/evalabs-ai/kova-tts
+
+exclude_docs: |
+  requirements.txt

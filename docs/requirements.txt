@@ -1,0 +1,8 @@
+# Documentation build only. Mirrors the `docs` dependency group in the root pyproject.toml,
+# for builders that install with pip rather than uv.
+#
+#   pip install -r docs/requirements.txt && mkdocs build --strict
+#
+# With uv, nothing extra is needed: `uv sync` installs this group already.
+mkdocs>=1.6
+mkdocs-material>=9.5

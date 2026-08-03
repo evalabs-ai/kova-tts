@@ -1,0 +1,121 @@
+# Example LoRA finetuning config for a single voice.
+#
+# Bring your own recordings: a folder of clips with transcripts, or a folder of clips alone.
+# `kova-tts prepare-data` turns either into the JSONL this config expects. Make sure you have
+# the right to train on the voice you are cloning -- an audio file being freely licensed does
+# not by itself grant rights to reproduce the speaker's voice.
+#
+# Copy this next to your data and edit the top section. Every key below is optional except
+# `dataset`, and every value shown is the default -- delete the lines you are not changing.
+# A real working config is often just:
+#
+#     dataset: data/train.jsonl
+#     voice: my_voice
+#
+# Relative paths resolve against THIS FILE's directory, so a config and its corpus travel
+# together. Run it with:
+#
+#     kova-tts finetune --config example_voice.yaml
+#
+# Expect ~15 minutes on one consumer GPU for a few hundred clips.
+
+# ----------------------------------------------------------------------------------- data
+
+# JSONL corpus: one {"text": "..."} object per line, built with
+# kova_tts.prompt.training_example(transcript, codes) -- transcript from the dataset's metadata,
+# codes from encoding the clip with kova_codec. Any other field on the line is ignored, so
+# provenance (source clip, duration) can ride along.
+#
+# 200-800 clips of clean, consistently-recorded speech is the useful range; more helps, but
+# inconsistent recording conditions hurt more than extra data helps. If you have hours of
+# material, a few hundred well-chosen clips beat all of it.
+dataset: data/train.jsonl
+
+# Held-out set in the same format. Leave unset to carve one out of `dataset` instead.
+# val_dataset: data/val.jsonl
+
+# Fraction held out when `val_dataset` is unset. Set to 0 to train without evaluation.
+val_split: 0.05
+
+# Examples longer than this are skipped with a warning, never truncated: truncating would cut
+# off <|speech_end|> and teach the model that utterances do not end. 80 audio tokens per
+# second, so 4096 tokens is a little under a minute of speech.
+max_length: 4096
+
+# ---------------------------------------------------------------------------------- model
+
+# Base checkpoint: a local directory or a Hugging Face repo id. Unset means "whatever
+# KOVA_MODEL_PATH points at", falling back to the published checkpoint.
+# model: kova-ai/kova-tts-1b
+
+# Continue training an adapter you already have, instead of starting from scratch -- another
+# pass over new material. The existing adapter's own config defines r/alpha/target_modules,
+# so the `lora:` section below is ignored when this is set.
+# init_from_adapter: runs/ft_001_my_voice_2026-08-03_11-04-22/final
+
+# --------------------------------------------------------------------------------- adapter
+
+# Rank 64 on the attention projections: ~55 MB per adapter, and leaving the MLP frozen keeps the
+# voice from dragging the base model's pronunciation with it. Raising r much past 64 buys little
+# for a single voice; lowering it to 16-32 is a reasonable trade if you are shipping many.
+lora:
+  r: 64
+  alpha: 64          # alpha == r means a scaling of 1.0
+  dropout: 0.0
+  target_modules: [q_proj, k_proj, v_proj, o_proj]
+
+# ------------------------------------------------------------------------ ending behaviour
+
+# The single biggest quality lever here. Cross entropy on the last `ramp_tokens` positions
+# before <|speech_end|> is multiplied by a ramp rising 1.0 -> `ramp_max`, and the
+# <|speech_end|> label itself by `eos_token_weight`. This teaches the model to commit to the
+# utterance-ending pattern; without it adapters trail off or overrun the transcript.
+#
+# The weights land on the ending *pattern* -- the last real tokens of speech. Weighting silence
+# instead teaches "any quiet stretch means stop" and truncates mid-sentence, so if you extend
+# this recipe, keep it anchored on <|speech_end|> rather than on audio content.
+#
+# Set ramp_tokens: 0 to keep only the flat EOS upweight, or enabled: false for plain
+# unweighted cross entropy.
+ending_weight:
+  enabled: true
+  ramp_tokens: 10
+  ramp_max: 4.5
+  eos_token_weight: 3.0
+
+# -------------------------------------------------------------------------------- schedule
+
+# Effective batch is batch_size * grad_accum = 8 sequences. On a 24 GB card, batch_size 2 at
+# max_length 4096 with gradient checkpointing is about the limit.
+epochs: 4
+batch_size: 2
+grad_accum: 4
+lr: 0.00015
+lr_scheduler_type: cosine
+warmup_ratio: 0.01
+weight_decay: 0.01
+seed: 42
+bf16: true
+gradient_checkpointing: true
+
+# --------------------------------------------------------------------------------- outputs
+
+# Each run creates a fresh numbered subdirectory here -- ft_007_my_voice_2026-08-03_11-04-22 --
+# containing a snapshot of this config, Trainer checkpoints, and final/ with the adapter.
+output_dir: runs
+
+# Named in the run directory and handy when training several voices from one script.
+voice: my_voice
+
+logging_steps: 10
+eval_steps: 500
+save_strategy: epoch     # or "steps", with save_steps below
+save_steps: 500
+save_total_limit: 4
+
+# Off by default, and no project name is assumed. Turn it on and name your own project.
+wandb:
+  enabled: false
+  # project: my-tts-voices
+  # entity: my-team
+  # tags: [lora, my_voice]

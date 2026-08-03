@@ -1,0 +1,7 @@
+PLACEHOLDER — the model weights license has not been chosen yet.
+
+This file will cover the released checkpoints (the LM, the codec, and the bundled
+voice adapters), which are distributed from the Hugging Face Hub rather than from
+this repository.
+
+Source code is covered separately by LICENSE.

@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --all-extras
+
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+      # Strict, so a broken link or a page missing from the nav fails here rather than
+      # silently shipping. The docs toolchain is a default sync group, so this costs nothing.
+      - name: Docs
+        run: uv run mkdocs build --strict
+
+      # No .env and no weights on CI, so only the CPU tests run.
+      - name: Test
+        env:
+          KOVA_DISABLE_DOTENV: "1"
+        run: uv run pytest -m "not gpu and not weights"

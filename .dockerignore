@@ -1,0 +1,73 @@
+# What never enters the build context.
+#
+# Two rules, in order of how much they matter:
+#
+# 1. Nothing private or heavy gets baked into an image that may be pushed to a registry --
+#    no `.env` with local checkpoint paths, no weights, no recordings.
+# 2. Nothing that changes on every edit and is rebuilt anyway gets to invalidate a layer --
+#    caches, virtualenvs, compiled bytecode.
+#
+# The build only needs `pyproject.toml`, `uv.lock`, `packages/`, `apps/`, `scripts/` and the
+# handful of files those reference. Everything below is either dangerous or dead weight.
+
+# Local model paths and secrets. `.env` holds absolute paths to this machine's checkpoints;
+# an image carrying it would resolve them inside the container, where they do not exist.
+# `.env.example` is not matched by these -- it is documentation, and it is meant to ship.
+.env
+.env.local
+**/.env
+**/.env.local
+
+# Version control and CI
+.git
+.gitignore
+.github
+
+# The host's virtualenv. It holds Linux wheels built against the host's Python and 5+ GB of
+# CUDA libraries; the image builds its own.
+.venv
+venv
+
+# Python build artefacts and caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Model weights. These are mounted at run time, never copied in. A single codec checkpoint is
+# ~4 GB, which is most of an image on its own.
+*.ckpt
+*.safetensors
+*.pt
+*.bin
+*.onnx
+*.gguf
+
+# Audio. No recording belongs in an image: they carry licensing and voice-likeness questions,
+# and a generated `out.wav` sitting in the checkout would ship with every build.
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.opus
+*.m4a
+
+# Prose. The image serves speech, not a documentation site.
+docs/
+mkdocs.yml
+
+# Run outputs
+outputs/
+runs/
+wandb/
+site/
+out/
+
+# `docker/` itself stays in the context: the image copies `docker/entrypoint.sh` out of it.
+# `docker/.env` -- compose's own configuration, which names host checkpoint directories -- is
+# already excluded by the `**/.env` rule above.

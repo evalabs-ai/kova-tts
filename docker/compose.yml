@@ -1,0 +1,92 @@
+# One service, because there is one process. This file is a convenience wrapper around a long
+# `docker run`, not an architecture: nothing here is a second container, and adding one would
+# not make a single-user, single-request TTS server faster.
+#
+#   cd docker
+#   cp env.example .env        # point KOVA_WEIGHTS_DIR at your checkpoints
+#   docker compose up          # serve on http://localhost:8000
+#   docker compose run --rm kova paths
+#   docker compose run --rm kova generate "Hello." -o /out/hello.wav
+#   docker compose run --rm --service-ports kova demo
+#
+# Compose reads `docker/.env` for the ${...} below. That is a different file from the
+# repository's own `.env`: this one names host directories to mount, and the image ignores
+# `.env` files entirely (see KOVA_DISABLE_DOTENV in the Dockerfile).
+
+# Without this the project is named after its directory, and every container and volume comes
+# out called `docker-something`.
+name: kova-tts
+
+services:
+  kova:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: kova-tts:latest
+    command: ["serve"]
+
+    # 8000 is the server, 7860 the demo. Both are published so `compose run --service-ports`
+    # can start either without editing this file.
+    ports:
+      - "${KOVA_PORT:-8000}:8000"
+      - "${KOVA_DEMO_PORT:-7860}:7860"
+
+    environment:
+      # Every one of these is optional and empty by default: an unset KOVA_* falls through to
+      # the Hugging Face Hub, and a *wrong* one fails loudly at `kova-tts paths` rather than
+      # quietly downloading gigabytes. Set them in docker/.env to paths inside /weights.
+      KOVA_MODEL_PATH: "${KOVA_MODEL_PATH:-}"
+      KOVA_CODEC_PATH: "${KOVA_CODEC_PATH:-}"
+      KOVA_WAVLM_PATH: "${KOVA_WAVLM_PATH:-}"
+      KOVA_LORA_DIR: "${KOVA_LORA_DIR:-}"
+      KOVA_HUB_REPO: "${KOVA_HUB_REPO:-}"
+      # For a gated or not-yet-public repository. Leave empty otherwise.
+      HF_TOKEN: "${HF_TOKEN:-}"
+
+    volumes:
+      # Local checkpoints, read-only: nothing in this image has any business writing to them.
+      # Replace the default with your own directory in docker/.env; the literal placeholder is
+      # there so that an unconfigured `compose up` fails immediately and says why, instead of
+      # starting a server that will spend two minutes discovering it has no model.
+      - "${KOVA_WEIGHTS_DIR:-/path/to/checkpoints}:/weights:ro"
+
+      # The Hugging Face cache, so a download happens once for the machine rather than once per
+      # container. Worth keeping even when you mount local checkpoints: WavLM still comes from
+      # the Hub unless KOVA_WAVLM_PATH points somewhere local.
+      - "kova-hf-cache:/home/kova/.cache/huggingface"
+
+      # Where `generate` writes. `docker/out/` is committed (as an empty directory with a
+      # .gitkeep) for one specific reason: a bind-mount source that does not exist is created
+      # by the daemon, as root, and the container -- which runs as uid 1000 and should -- then
+      # cannot write to its own output directory. An existing directory keeps the ownership of
+      # whoever cloned the repository, which is the person who wants to read the wav.
+      # Not uid 1000 on your host? Add `user: "${UID}:${GID}"` to this service.
+      - "./out:/out"
+
+    # GPU passthrough. Needs the NVIDIA container toolkit on the host; `docker run --gpus all
+    # nvidia/cuda:13.0.1-base-ubuntu24.04 nvidia-smi` is the one-line check that it is there.
+    # Compose v2.30+ also accepts the shorter `gpus: all`; this form works on every v2.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    # Only meaningful for `serve`; the demo does not answer /health. The long start period is
+    # not slack -- it is the model load plus the warmup generation, which is the point of the
+    # warmup, and a container marked unhealthy while it legitimately loads is a false alarm.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx,sys; sys.exit(0 if httpx.get('http://127.0.0.1:8000/health').json()['model_loaded'] else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
+
+    # The server holds one model and serves one request at a time; if it dies, it died for a
+    # reason a restart will hit again. `unless-stopped` still gets you through a host reboot.
+    restart: unless-stopped
+
+volumes:
+  kova-hf-cache:

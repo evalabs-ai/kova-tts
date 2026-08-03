@@ -1,0 +1,39 @@
+# Local model paths and secrets — never published
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Model weights and generated audio
+*.ckpt
+*.safetensors
+*.pt
+*.bin
+# No audio is ever committed to this repository, including test fixtures: every
+# recording carries licensing and voice-likeness questions we do not want to inherit.
+# Tests synthesize their own signals, or read a local file via KOVA_TEST_AUDIO.
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.opus
+*.m4a
+
+# Run outputs
+outputs/
+runs/
+wandb/
+site/

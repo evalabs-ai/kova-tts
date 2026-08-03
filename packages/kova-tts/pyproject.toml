@@ -1,0 +1,59 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kova-tts"
+version = "0.1.0"
+description = "Kova TTS: expressive text-to-speech with voice cloning and LoRA finetuning"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "kova-codec",
+    "torch>=2.8",
+    "transformers>=4.45",
+    # Not just for finetuning: loading a LoRA voice for inference goes through peft, so a
+    # base install that cannot use `--voice` would be a surprising thing to ship.
+    "peft>=0.14",
+    "numpy>=1.26",
+    "soundfile>=0.12",
+    "pyloudnorm>=0.1.1",
+    "scipy>=1.11",
+    "python-dotenv>=1.0",
+    "huggingface-hub>=0.26",
+]
+
+[project.optional-dependencies]
+server = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    # The WebSocket protocol for uvicorn, the sync client the WebSocket example uses, and --
+    # via websockets>=13 -- both from one dependency.
+    "websockets>=13.0",
+    # fastapi.testclient is httpx-based, so this is what makes `--extra server` enough to run
+    # the server's tests without pulling in every other extra.
+    "httpx>=0.27",
+]
+# Gradio 6 for the demo: the theme and stylesheet moved from Blocks() to launch() there, and
+# apps/demo/app.py follows the new signature.
+demo = ["gradio>=6.0"]
+data = ["faster-whisper>=1.1"]
+# The training command only. `pyyaml` parses the run config; `accelerate` is never imported
+# here but `transformers.Trainer` requires it at runtime. Both already arrive transitively with
+# `peft`, which is a base dependency, so this extra costs almost nothing on top of a base
+# install. Deliberately no `datasets`: the trainer builds its own dataset over the JSONL corpus
+# (`finetune.dataset.build_datasets`) and never imports the library.
+finetune = [
+    "accelerate>=1.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+kova-tts = "kova_tts.cli:main"
+
+[tool.uv.sources]
+kova-codec = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kova_tts"]

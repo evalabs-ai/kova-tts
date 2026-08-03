@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kova-codec"
+version = "0.1.0"
+description = "Neural audio codec for Kova TTS: 32 kHz waveforms <-> 80 tok/s discrete codes"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    # torch and torchaudio must come from the same CUDA build; mismatched wheels
+    # raise ABI errors such as "undefined symbol: torch_dtype_*".
+    "torch>=2.8",
+    "torchaudio>=2.8",
+    "numpy>=1.26",
+    # Lightning checkpoints are unpickled with weights_only=False and may carry
+    # omegaconf objects in their hyperparameters.
+    "omegaconf>=2.3",
+    # WavLM, for the encode path only.
+    "transformers>=4.45",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kova_codec"]
