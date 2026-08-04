@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import math
 import os
-from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
 
-from kova_codec.constants import SAMPLE_RATE, TOKEN_RATE
+from kova_codec.constants import HOP_LENGTH, SAMPLE_RATE, TOKEN_RATE
 from kova_tts import audio as audio_io
 from kova_tts import prompt as prompt_module
 from kova_tts import tokens as tokens_module
@@ -149,8 +148,9 @@ class TestPrompt:
 # ------------------------------------------------------------------------------ carry across
 
 #: Ordinary prose with a realistic spread of sentence lengths, including sentences long enough
-#: that the splitter has to break them. The bug this section guards against only ever showed up
-#: on text like this: with short sentences every segment carried and nothing looked wrong.
+#: that the splitter has to break them. Text of this shape is what exercises the carry: every
+#: segment of a paragraph of short sentences fits the carry limit whether or not it is sized
+#: correctly, so short text cannot tell the two apart.
 PARAGRAPHS = [
     "The committee spent the better part of the afternoon working through the revised "
     "schedule, and by the time the last item was settled it was clear that the original "
@@ -196,6 +196,9 @@ class RecordingGenerator:
     def stream_ids(self, ids, params=None, *, greedy: bool = False):
         self.used.append(self.encoded[-1])
         return iter(range(1, self.counts.pop(0) + 1))
+
+    def unload_lora(self) -> None:
+        """No adapters here, but every generation asks for the base weights first."""
 
 
 def _plausible_counts(chunks: list[str], rate: float = 4.5) -> list[int]:
@@ -312,6 +315,122 @@ class TestReferenceTrim:
         assert audio_io.trim_leading(np.zeros(100, dtype=np.float32), 10.0).size == 0
 
 
+class SineCodec:
+    """A codec stand-in that decodes code `c` to the 400 samples of a tone at position `c`.
+
+    Position-aware on purpose. The generator below emits codes 1, 2, 3, ..., so a whole
+    utterance decodes to one continuous sine -- which means any discontinuity found in the
+    output was put there by the code under test and not by the stand-in.
+    """
+
+    device = torch.device("cpu")
+    sample_rate = SAMPLE_RATE
+
+    @staticmethod
+    def _tone(codes: torch.Tensor) -> torch.Tensor:
+        offsets = codes[..., None] * HOP_LENGTH + torch.arange(HOP_LENGTH)
+        return 0.5 * torch.sin(2 * math.pi * 220.0 * offsets / SAMPLE_RATE).flatten(-2)
+
+    def decode(self, codes: torch.Tensor) -> torch.Tensor:
+        return self._tone(codes)
+
+    def decode_with_lstm(self, codes, state=None, return_lstm_state=None, conv_padding=None):
+        trimmed = codes[:, conv_padding:-conv_padding] if conv_padding else codes
+        return self._tone(trimmed), (None if return_lstm_state is None else torch.zeros(1))
+
+
+class TestOutputSampleRate:
+    """`sample_rate=` on the public calls, and the property that makes it usable: streaming at
+    a converted rate has to give the same audio as generating at it, joins included."""
+
+    TEXT = "One sentence here. And a second one, a little longer than the first."
+
+    def facade(self, **kwargs) -> KovaTTS:
+        chunks = split_sentences(self.TEXT)
+        generator = RecordingGenerator(_plausible_counts(chunks))
+        return KovaTTS(generator, codec=SineCodec(), **kwargs)
+
+    def streamed(self, tts: KovaTTS, **kwargs) -> tuple[np.ndarray, list]:
+        frames = list(tts.stream(self.TEXT, **kwargs))
+        return np.concatenate([f.samples for f in frames]), frames
+
+    def test_the_default_is_the_model_rate(self):
+        assert (
+            self.facade().generate(self.TEXT).size
+            == self.facade().generate(self.TEXT, sample_rate=SAMPLE_RATE).size
+        )
+
+    @pytest.mark.parametrize("rate", [16_000, 24_000, 8_000, 44_100])
+    def test_generate_returns_the_requested_rate(self, rate):
+        native = self.facade().generate(self.TEXT)
+        out = self.facade().generate(self.TEXT, sample_rate=rate)
+        assert out.dtype == np.float32 and out.ndim == 1
+        assert out.size == math.ceil(native.size * rate / SAMPLE_RATE)
+
+    @pytest.mark.parametrize("rate", [16_000, 8_000])
+    def test_frames_report_the_rate_actually_delivered(self, rate):
+        _, frames = self.streamed(self.facade(), sample_rate=rate)
+        assert all(f.sample_rate == rate for f in frames)
+        assert frames[-1].is_final
+
+    @pytest.mark.parametrize("rate", [16_000, 24_000, 8_000, 44_100])
+    def test_streaming_matches_generating_at_a_converted_rate(self, rate):
+        """The reason the streaming resampler is stateful. A stateless one applied per frame
+        gives the right length and the wrong samples at every join."""
+        whole = self.facade().generate(self.TEXT, sample_rate=rate)
+        streamed, _ = self.streamed(self.facade(), sample_rate=rate)
+        assert streamed.shape == whole.shape
+        np.testing.assert_allclose(streamed, whole, rtol=0, atol=1e-6)
+
+    def test_the_tail_is_flushed_into_the_final_frame(self):
+        """The resampler holds output back until its right-hand context arrives; those samples
+        have to come out somewhere, and the last frame is the only place left."""
+        whole = self.facade().generate(self.TEXT, sample_rate=16_000)
+        streamed, frames = self.streamed(self.facade(), sample_rate=16_000)
+        assert frames[-1].samples.size > 0
+        assert streamed.size == whole.size
+
+    @pytest.mark.parametrize("rate", [16_000, 8_000])
+    def test_the_frame_joins_carry_no_step(self, rate):
+        """A per-frame resample leaves a filter discontinuity at every join. Measured against
+        the signal's own step distribution, a seam is an outlier; there should be none."""
+        streamed, frames = self.streamed(self.facade(), sample_rate=rate)
+        joins = np.cumsum([f.samples.size for f in frames])[:-1]
+        joins = joins[(joins > 0) & (joins < streamed.size)]
+        assert joins.size > 2, "this text no longer produces enough frames to have joins"
+        steps = np.abs(np.diff(streamed))
+        assert steps[joins - 1].max() <= np.percentile(steps, 99.9)
+
+    def test_the_native_rate_is_not_run_through_a_resampler_at_all(self):
+        whole = self.facade().generate(self.TEXT)
+        streamed, _ = self.streamed(self.facade())
+        np.testing.assert_array_equal(streamed, whole)
+
+    @pytest.mark.parametrize("rate", [0, -1])
+    def test_a_non_positive_rate_is_refused(self, rate):
+        with pytest.raises(ValueError, match="sample_rate must be positive"):
+            self.facade().generate(self.TEXT, sample_rate=rate)
+        with pytest.raises(ValueError, match="sample_rate must be positive"):
+            next(self.facade().stream(self.TEXT, sample_rate=rate))
+
+    @pytest.mark.parametrize("rate", [SAMPLE_RATE, 16_000, 8_000])
+    def test_the_reference_trim_still_removes_the_reference(self, rate, clone_voice):
+        """The trim is expressed in seconds, so it should survive a rate change -- but it is
+        applied either side of the conversion, and getting that order wrong leaves part of the
+        reference clip in the output at exactly the rates a caller is most likely to ask for."""
+        tts = self.facade()
+        codes = sum(_plausible_counts(split_sentences(self.TEXT)))
+        wav = tts.generate(self.TEXT, clone_voice, sample_rate=rate)
+        assert wav.size == math.ceil(codes * HOP_LENGTH * rate / SAMPLE_RATE)
+
+    @pytest.mark.parametrize("rate", [SAMPLE_RATE, 16_000])
+    def test_a_cloned_stream_drops_the_reference_too(self, rate, clone_voice):
+        whole = self.facade().generate(self.TEXT, clone_voice, sample_rate=rate)
+        streamed, _ = self.streamed(self.facade(), voice=clone_voice, sample_rate=rate)
+        assert streamed.shape == whole.shape
+        np.testing.assert_allclose(streamed, whole, rtol=0, atol=1e-6)
+
+
 class TestCloneErrors:
     def test_a_missing_transcript_points_at_the_seam(self, facade):
         with pytest.raises(ValueError, match="transcriber="):
@@ -338,33 +457,13 @@ class TestCloneErrors:
 # ------------------------------------------------------------------------------- end to end
 
 
-def _free_cuda_device() -> torch.device:
-    """The CUDA device with the most free memory. This box has two and another job may own one."""
-    if not torch.cuda.is_available():
-        pytest.skip("no CUDA device")
-    best = max(range(torch.cuda.device_count()), key=lambda i: torch.cuda.mem_get_info(i)[0])
-    return torch.device("cuda", best)
-
-
-def _local(env_var: str) -> str:
-    from kova_tts import paths
-
-    paths.load_dotenv()
-    value = os.environ.get(env_var, "").strip()
-    if not value or not Path(value).exists():
-        pytest.skip(f"set {env_var} to a local path to run this test")
-    return value
-
-
 @pytest.fixture(scope="module")
-def tts() -> KovaTTS:
+def tts(cuda_device, local_artifact) -> KovaTTS:
     from kova_tts import paths
 
-    model = _local(paths.ENV_MODEL)
-    codec = _local(paths.ENV_CODEC)
-    return KovaTTS.from_pretrained(
-        model, codec=codec, device=_free_cuda_device(), max_cache_len=1536
-    )
+    model = local_artifact(paths.ENV_MODEL)
+    codec = local_artifact(paths.ENV_CODEC)
+    return KovaTTS.from_pretrained(model, codec=codec, device=cuda_device, max_cache_len=1536)
 
 
 @pytest.mark.gpu
@@ -408,16 +507,16 @@ def test_several_sentences_produce_more_audio_than_one(tts):
 
 @pytest.mark.gpu
 @pytest.mark.weights
-def test_a_clone_does_not_begin_with_its_reference(tts):
+def test_a_clone_does_not_begin_with_its_reference(tts, local_artifact):
     """The single easiest thing to get subtly wrong: the reference is re-rendered first.
 
     The assertion is about the trim, so it holds whatever the reference says -- set
     ``KOVA_TEST_TRANSCRIPT`` to the clip's real words for an intelligible sample as well.
     """
-    reference = _local("KOVA_TEST_AUDIO")
-    _local(  # cloning needs the encoder, and therefore WavLM
-        __import__("kova_tts", fromlist=["paths"]).paths.ENV_WAVLM
-    )
+    from kova_tts import paths
+
+    reference = local_artifact("KOVA_TEST_AUDIO")
+    local_artifact(paths.ENV_WAVLM)  # cloning needs the encoder, and therefore WavLM
     transcript = os.environ.get("KOVA_TEST_TRANSCRIPT") or "This is a short spoken recording."
     voice = tts.clone(reference, transcript=transcript)
     assert voice.is_clone and voice.ref_seconds > 0.5

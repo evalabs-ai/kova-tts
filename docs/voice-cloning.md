@@ -94,11 +94,9 @@ Both presets sample identically; only the token budget differs:
 | `repetition_penalty` | 1.1 | 1.1 |
 | `max_tokens` | 2048 | 3500 |
 
-`generate` picks the right one from the voice you pass, so normally you do nothing. The
-repetition penalty is the interesting one: the reference codes sitting at the front of the
-continuation are exactly the kind of repetition a high penalty punishes, and penalising them
-makes the model drift off the voice. `max_tokens` is larger because the reference clip is
-generated before your text is.
+`generate` picks the right one from the voice you pass, so normally you do nothing. The budget is
+larger because the reference clip is generated before your text is, and a clone that runs out of
+tokens stops mid-sentence.
 
 To override, pass `params=`:
 

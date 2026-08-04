@@ -8,7 +8,8 @@ run `uv run kova-tts paths` first if anything cannot find a checkpoint.
 | [`quickstart.py`](quickstart.py) | Load the model, synthesize a line, write a WAV. | — |
 | [`voice_clone.py`](voice_clone.py) | Clone a voice from your own reference recording, transcribing it automatically. | `--extra data` |
 | [`stream_sse.py`](stream_sse.py) | Streaming synthesis over Server-Sent Events. | `--extra server` |
-| [`stream_ws.py`](stream_ws.py) | Streaming synthesis over a WebSocket. | `--extra server` |
+| [`stream_ws.py`](stream_ws.py) | An incremental WebSocket session: text as you have it, in the container and at the rate you ask for. | `--extra server` |
+| [`openai_client.py`](openai_client.py) | The OpenAI-compatible endpoint, called the way an OpenAI client calls it. | `--extra server` |
 
 No audio ships with this repository, so the cloning example needs a recording of your own:
 five to twenty seconds of one person speaking clearly.

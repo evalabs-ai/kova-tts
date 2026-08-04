@@ -115,10 +115,9 @@ class SamplingParams:
     def for_cloning(cls, **overrides: object) -> SamplingParams:
         """Preset for voice cloning.
 
-        Hotter and far less repetition-penalised than plain TTS: the reference codes at the
-        front of the continuation are exactly the kind of repetition a high penalty punishes,
-        and penalising them makes the model drift off the voice. ``max_tokens`` is larger
-        because the reference clip is generated before the target text.
+        The sampling knobs are :data:`TTS_SAMPLING`'s; only ``max_tokens`` is larger, because a
+        clone prompt spends part of its budget re-rendering the reference clip before it reaches
+        the target text.
         """
         return CLONE_SAMPLING.replace(**overrides)
 

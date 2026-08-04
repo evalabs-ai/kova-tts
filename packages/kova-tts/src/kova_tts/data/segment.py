@@ -89,20 +89,21 @@ class SegmentSettings:
 # ------------------------------------------------------------------------------- measurement
 
 
-def frame_db(
-    wav: np.ndarray,
-    sample_rate: int = SAMPLE_RATE,
-    *,
-    frame_seconds: float = FRAME_SECONDS,
-    hop_seconds: float = HOP_SECONDS,
-) -> np.ndarray:
+def _frame_and_hop(sample_rate: int) -> tuple[int, int]:
+    """:data:`FRAME_SECONDS` and :data:`HOP_SECONDS` in samples, each at least one."""
+    return (
+        max(1, int(round(FRAME_SECONDS * sample_rate))),
+        max(1, int(round(HOP_SECONDS * sample_rate))),
+    )
+
+
+def frame_db(wav: np.ndarray, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
     """Per-frame RMS in dB relative to the loudest frame. Frame ``i`` starts at ``i * hop``.
 
     Relative rather than absolute so a quiet recording and a hot one are trimmed the same way.
     """
     audio = as_waveform(wav)
-    frame = max(1, int(round(frame_seconds * sample_rate)))
-    hop = max(1, int(round(hop_seconds * sample_rate)))
+    frame, hop = _frame_and_hop(sample_rate)
     if audio.size < frame:
         # Too short to window: the whole clip is one frame, so it is all speech or all silence.
         energy = float(np.mean(audio.astype(np.float64) ** 2)) if audio.size else 0.0
@@ -119,8 +120,7 @@ def frame_db(
 def _speech_mask(wav: np.ndarray, sample_rate: int, top_db: float) -> tuple[np.ndarray, int, int]:
     """Boolean per-frame "this is not silence" mask, plus the frame and hop in samples."""
     db = frame_db(wav, sample_rate)
-    frame = max(1, int(round(FRAME_SECONDS * sample_rate)))
-    hop = max(1, int(round(HOP_SECONDS * sample_rate)))
+    frame, hop = _frame_and_hop(sample_rate)
     return db > -top_db, frame, hop
 
 

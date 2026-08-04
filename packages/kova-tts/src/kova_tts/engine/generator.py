@@ -1,30 +1,29 @@
 """The batch-1 decode loop: prompt string in, codec codes out.
 
-This is where the throughput is. One request at a time, no scheduler, no padding, no batching --
-which is exactly why a plain torch loop can win here, provided the two things that dominate a
-1B-parameter decode step at batch 1 are dealt with:
+One request at a time, no scheduler, no padding, no batching -- which is why a plain torch loop
+can win here, provided the two things that dominate a 1B-parameter decode step at batch 1 are
+dealt with:
 
 **Python.** An eager ``transformers`` forward costs ~15 ms of host time per step while the GPU
 work is under 3 ms, so the loop is launch-bound by a factor of five. A preallocated static KV
 cache plus a CUDA graph capture of the single-token step takes the host out of the inner loop
-entirely: measured **62 -> 341 codes/second, 5.5x**, on an RTX 5090 with a 4096-token cache.
-Prefill stays eager -- it happens once, its shape changes per request, and capturing it would
-buy nothing.
+entirely, worth **5.5x** end to end. Prefill stays eager: it happens once, its shape changes
+per request, and capturing it would buy nothing.
 
-**Memory traffic.** Two fixes, both measured on the same RTX 5090:
+**Memory traffic.** Two fixes:
 
 * *The LM head.* ``tie_word_embeddings`` is true, so ``lm_head.weight`` **is** the
   136576x2048 embedding matrix -- 559 MB of the 2.51 GB read per step, 22% of the traffic, to
   produce logits for 128k text tokens the model must never emit mid-utterance. The 8193 rows
   that matter (8192 audio tokens plus ``<|speech_end|>``) are gathered once at load into their
-  own 34 MB buffer; the input side keeps the full embedding. Worth **1.12x** (3.04 -> 2.72 ms
-  per step), against 1.27x if the step were purely bandwidth-bound.
+  own 34 MB buffer; the input side keeps the full embedding. Worth **1.12x**, against the 1.27x
+  a purely bandwidth-bound step would give.
 * *Attention.* ``transformers`` materialises the GQA expansion (``repeat_kv``) before calling
   SDPA, because SDPA's native GQA path refuses any attention mask. At batch 1 with one query
   that means writing and re-reading 4x the KV cache every layer: 224 us per layer at a 4096
-  cache, against 30 us for the obvious hand-rolled gemv. :func:`decode_attention` does the
-  gemv, and only for the single-token step; prefill goes through SDPA unchanged. Worth
-  **2.14x** on the decode step, and it is what keeps the step almost flat in cache length.
+  cache, against 30 us for the hand-rolled gemv. :func:`decode_attention` does the gemv, and
+  only for the single-token step; prefill goes through SDPA unchanged. Worth **2.14x** on the
+  decode step, and it is what keeps the step almost flat in cache length.
 
 Both paths -- CUDA graph and eager -- run the same arithmetic and produce the same tokens at
 ``temperature=0``, which is what makes the fallback testable. Set ``KOVA_DISABLE_CUDA_GRAPH=1``
@@ -228,8 +227,7 @@ class Generator:
 
         Capturing the decode step takes ~1 s, and the first prefill another ~200 ms of cuBLAS
         and cuDNN autotuning. Left lazy, all of that lands in the first request's
-        time-to-first-audio -- 1.2 s against the 17 ms a warm prefill costs -- which is the
-        difference between a demo that feels instant and one that does not. Load time is the
+        time-to-first-audio -- 1.2 s, against the 17 ms a warm prefill costs. Load time is the
         right place to spend it: nobody is waiting on a response yet.
 
         Safe to call repeatedly; work already done is skipped. An adapter loaded later with
@@ -296,18 +294,18 @@ class Generator:
         With ``merge=True`` (the default) the adapter is folded into the base weights in place:
         the decode step runs no extra kernels at all, and an already-captured CUDA graph stays
         valid, because it reads the same weight tensors and those tensors now hold the merged
-        values. Measured **340 codes/second, against 276 unmerged -- 1.23x**. Peft's
-        ``merge_adapter`` is used rather than ``merge_and_unload`` for one reason: it is
-        reversible, so switching voices unmerges and re-merges (283 ms) instead of reloading
-        2.5 GB of weights. The arithmetic folded in is identical either way. Unmerging in
-        bfloat16 does not land exactly back on the original weights -- measured max drift
-        2.2e-3, 0.3% of the largest weight -- but it is bf16 rounding, not accumulation: it
-        stops growing after the first round trip and is unchanged after fifty.
+        values. That is **1.23x** the throughput of an unmerged adapter. Peft's
+        ``merge_adapter`` is used rather than ``merge_and_unload`` because it is reversible, so
+        switching voices unmerges and re-merges (283 ms) instead of reloading 2.5 GB of weights;
+        the arithmetic folded in is identical either way. Unmerging in bfloat16 does not land
+        exactly back on the original weights -- max drift 2.2e-3, 0.3% of the largest weight --
+        but that is rounding rather than accumulation, and it does not grow with further round
+        trips.
 
         With ``merge=False`` the adapter stays a separate pair of matrices applied at every
         attention projection, and switching is instant (15 ms) because nothing is written. That
-        is the mode for a demo that changes voice constantly; each adapter gets its own captured
-        graph, sharing one memory pool.
+        is the mode for a caller that changes voice constantly; each adapter gets its own
+        captured graph, sharing one memory pool.
         """
         if self._lora is None:
             self._lora = _LoraState(self.model)
@@ -476,8 +474,8 @@ class Generator:
         """One decode step, through the captured graph when there is one."""
         graph = self._graph.get(self._graph_key) if self.cuda_graph else None
         if graph is None:
-            # Nothing captured for these weights yet -- only reachable when the step is driven
-            # directly rather than through a generation, which calls _ensure_graph() first.
+            # No graph in effect: graphs are off, or the step is being driven directly rather
+            # than through a generation, which captures first via _ensure_graph().
             return self._decode_body()
         graph.replay()
         return self._graph_logits[self._graph_key]
@@ -530,12 +528,12 @@ class Generator:
         fresh generation away from a prefill, which resets both.
 
         Both streams are created explicitly on this generator's device, and the capture stream
-        is passed to ``torch.cuda.graph`` rather than left to default. That is not belt and
-        braces: ``torch.cuda.graph`` lazily builds **one process-wide capture stream** on
-        whichever device happened to be current at the first capture in the process, and reuses
-        it forever. A second generator on a second GPU would capture onto a stream belonging to
-        the first, record zero kernels, and replay as a silent no-op -- leaving the logits
-        frozen at their captured values and the decode loop generating nonsense.
+        is passed to ``torch.cuda.graph`` rather than left to default, because
+        ``torch.cuda.graph`` lazily builds **one process-wide capture stream** on whichever
+        device happened to be current at the first capture in the process and reuses it forever.
+        A second generator on a second GPU would then capture onto a stream belonging to the
+        first, record zero kernels, and replay as a silent no-op -- leaving the logits frozen at
+        their captured values and the decode loop generating nonsense.
         """
         if not self._cache.layers[0].is_initialized:
             raise RuntimeError("Capture needs an initialised KV cache; prefill first.")
@@ -564,9 +562,8 @@ class Generator:
         """Prove the graph replays into the output buffer before trusting it.
 
         An empty capture is not an error in torch -- it warns and hands back a graph whose
-        ``replay()`` does nothing at all. That failure is invisible from the outside: generation
-        keeps running, on frozen logits. One probe replay at capture time is cheap insurance
-        against ever shipping that silently.
+        ``replay()`` does nothing at all, which is invisible from the outside: generation keeps
+        running, on frozen logits. One probe replay at capture time turns that into a raise.
         """
         logits.zero_()
         graph.replay()
@@ -647,8 +644,8 @@ def _reject_retrained_embeddings(config: Path) -> None:
 
     The narrowed head is a copy of the embedding rows taken at load time, so an adapter that
     changes those rows would be applied to the model's input side and silently ignored on its
-    output side. No shipped Kova voice does this -- they are attention-only -- but failing
-    loudly beats generating subtly wrong audio.
+    output side. Kova's own voices are attention-only, so this raises rather than producing
+    subtly wrong audio.
     """
     import json
 

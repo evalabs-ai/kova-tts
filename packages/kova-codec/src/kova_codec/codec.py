@@ -39,9 +39,9 @@ class KovaCodec(torch.nn.Module):
         device: Defaults to CUDA when available.
         dtype: Dtype for the codec stack. ``None`` resolves to float16 for **decode-only
             CUDA** instances and float32 otherwise: fp16 *encode* flips a couple of percent of
-            VQ codes relative to fp32 and has not been perceptually validated. WavLM always
-            stays float32. Decoding the ``synthetic_wav`` fixture on an RTX 5090 measures
-            1.3x faster at five seconds and 1.7x at thirty, for ~42 dB SNR against fp32.
+            VQ codes relative to fp32 and has not been perceptually validated, while fp16
+            *decode* is 1.3x to 1.7x faster for ~42 dB SNR against fp32. WavLM always stays
+            float32.
         wavlm_model_name: HuggingFace repo id or local directory for WavLM-large. ``None``
             builds a **decode-only** codec: WavLM is never loaded and :meth:`encode` raises.
     """

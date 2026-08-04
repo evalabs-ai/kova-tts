@@ -210,6 +210,7 @@ Needs `uv sync --extra server`. Full page: [Server](server.md).
 | `--host`, `--port` | Where to bind. Loopback by default, deliberately: there is no authentication |
 | `--model`, `--codec`, `--wavlm`, `--lora-dir`, `--device` | Override the configured paths |
 | `--clone-preroll N` | Reference codes decoded to warm a cloned generation (default 80, one second) |
+| `--voice-alias NAME=VOICE` | Point one of OpenAI's stock voice names at a real one, e.g. `alloy=my_voice`. Repeatable |
 | `--busy-timeout SECONDS` | How long a second caller waits before a 409 (default 5; `0` refuses at once) |
 | `--no-warmup` | Skip the startup generation; the first request pays for it instead |
 | `--log-level` | `critical`, `error`, `warning`, `info`, `debug`, `trace` |

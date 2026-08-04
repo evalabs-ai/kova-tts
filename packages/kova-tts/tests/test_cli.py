@@ -110,6 +110,14 @@ def engine(monkeypatch) -> list[tuple]:
     return FakeTTS.calls
 
 
+@pytest.fixture
+def reference(tmp_path):
+    """A reference clip for --clone-audio. Only its existence is checked; the engine is fake."""
+    clip = tmp_path / "ref.wav"
+    clip.write_bytes(b"RIFF")
+    return clip
+
+
 # --------------------------------------------------------------------------------------- help
 
 
@@ -387,9 +395,7 @@ class TestGenerate:
 
 
 class TestCloning:
-    def test_clone_with_a_transcript(self, engine, tmp_path):
-        reference = tmp_path / "ref.wav"
-        reference.write_bytes(b"RIFF")
+    def test_clone_with_a_transcript(self, engine, tmp_path, reference):
         argv = [
             "generate",
             "Say something new.",
@@ -405,9 +411,9 @@ class TestCloning:
         # A cloned voice gets the cloning preset when it is overridden, not the TTS one.
         assert next(c for c in engine if c[0] == "generate")[2].is_clone
 
-    def test_clone_without_a_transcript_asks_the_transcriber(self, engine, tmp_path, capsys):
-        reference = tmp_path / "ref.wav"
-        reference.write_bytes(b"RIFF")
+    def test_clone_without_a_transcript_asks_the_transcriber(
+        self, engine, tmp_path, reference, capsys
+    ):
         argv = [
             "generate",
             "Say something new.",
@@ -420,9 +426,7 @@ class TestCloning:
         assert ("clone", str(reference), None) in engine
         assert "reference heard as" in capsys.readouterr().err
 
-    def test_cloning_preset_is_the_override_base(self, engine, tmp_path):
-        reference = tmp_path / "ref.wav"
-        reference.write_bytes(b"RIFF")
+    def test_cloning_preset_is_the_override_base(self, engine, tmp_path, reference):
         argv = [
             "generate",
             "Hi.",
@@ -447,9 +451,7 @@ class TestCloning:
         assert "Reference audio not found" in capsys.readouterr().err
         assert engine == []
 
-    def test_voice_and_clone_are_exclusive(self, engine, tmp_path, capsys):
-        reference = tmp_path / "ref.wav"
-        reference.write_bytes(b"RIFF")
+    def test_voice_and_clone_are_exclusive(self, engine, reference, capsys):
         code = cli.main(["generate", "Hi.", "--voice", "voice_a", "--clone-audio", str(reference)])
         assert code == 2
         assert "not both" in capsys.readouterr().err
@@ -509,10 +511,10 @@ class TestAsrSeam:
         with pytest.raises(cli.CommandError, match="faster-whisper"):
             cli.asr_transcriber()("a.wav")
 
-    def test_the_engine_reports_it_as_a_command_error(self, engine, monkeypatch, tmp_path, capsys):
+    def test_the_engine_reports_it_as_a_command_error(
+        self, engine, monkeypatch, tmp_path, reference, capsys
+    ):
         """A missing ``data`` extra surfaces from inside clone() as one sentence, not a stack."""
-        reference = tmp_path / "ref.wav"
-        reference.write_bytes(b"RIFF")
 
         def refuse(self, audio, transcript=None, *, name=None):
             raise cli.CommandError("Transcription needs faster-whisper: pip install ...")

@@ -98,8 +98,8 @@ uv run kova-tts generate "A longer line, so there is something to stream." --str
 out.wav  4.71 s of audio in 6.1 s, first audio after 4.89 s (0.8x)
 ```
 
-Again: cold. Warm, first audio lands around 190 ms in-process and around 200 ms over the
-[server's WebSocket](server.md).
+Again: cold. The warm figures, and the card each was measured on, are in
+[Performance](index.md#performance).
 
 Streaming is not faster overall — it is the same work, reported earlier.
 

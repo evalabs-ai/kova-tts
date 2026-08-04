@@ -24,7 +24,7 @@ from typing import Any
 from fastapi import FastAPI
 
 from kova_tts import __version__
-from kova_tts.server import errors, routes, ws
+from kova_tts.server import errors, openai_api, routes, ws
 from kova_tts.server.engine import DEFAULT_BUSY_TIMEOUT, Engine
 
 log = logging.getLogger(__name__)
@@ -55,6 +55,7 @@ def create_app(
     clone_preroll: int | None = DEFAULT_CLONE_PREROLL,
     busy_timeout: float = DEFAULT_BUSY_TIMEOUT,
     warmup: bool = True,
+    voice_aliases: dict[str, str] | list[str] | None = None,
 ) -> FastAPI:
     """Build the application.
 
@@ -71,7 +72,19 @@ def create_app(
         busy_timeout: Seconds a second caller waits for the model before getting a 409.
         warmup: Synthesize one short sentence at startup. Worth it: it forces the codec load
             and the CUDA graph capture that the first real request would otherwise pay for.
+        voice_aliases: Where OpenAI's stock voice names point on this machine, either as a
+            mapping or as ``"alloy=my_voice"`` entries. ``None`` reads
+            :data:`~kova_tts.server.openai_api.VOICE_ALIAS_ENV` from the environment. Only
+            ``POST /v1/audio/speech`` consults it; every unmapped stock name speaks in the base
+            voice. An alias naming a voice that is not installed stops the server at startup.
     """
+    aliases = (
+        dict(voice_aliases)
+        if isinstance(voice_aliases, dict)
+        else openai_api.parse_aliases(voice_aliases)
+        if voice_aliases is not None
+        else openai_api.aliases_from_environment()
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -90,6 +103,10 @@ def create_app(
             )
         )
         app.state.engine = Engine(loaded, busy_timeout=busy_timeout)
+        # Before the first request and before warmup: an alias pointing at a voice that is not
+        # installed is an operator error, and the moment to say so is now, loudly, not on
+        # whichever request happens to use it.
+        openai_api.validate_aliases(app.state.engine, aliases)
         if injected is None and warmup:
             await asyncio.to_thread(_warm, loaded)
         try:
@@ -107,10 +124,13 @@ def create_app(
     # Set before the lifespan runs so `create_app(tts=...)` needs no other wiring.
     app.state.tts = tts
     app.state.engine = None
+    app.state.voice_aliases = aliases
 
     errors.install(app)
     app.include_router(routes.router)
     app.include_router(ws.router)
+    # The OpenAI-shaped surface last: it is an addition to the API above, not a layer over it.
+    app.include_router(openai_api.router)
     return app
 
 
@@ -169,6 +189,14 @@ def add_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
 
     group = parser.add_argument_group("serving")
     group.add_argument(
+        "--voice-alias",
+        action="append",
+        metavar="NAME=VOICE",
+        default=None,
+        help="point one of OpenAI's stock voice names at a real voice, e.g. alloy=my_voice; "
+        "repeatable. Unmapped stock names speak in the base voice",
+    )
+    group.add_argument(
         "--busy-timeout",
         type=float,
         default=DEFAULT_BUSY_TIMEOUT,
@@ -208,6 +236,7 @@ def run(args: argparse.Namespace) -> int:
         clone_preroll=args.clone_preroll,
         busy_timeout=args.busy_timeout,
         warmup=not args.no_warmup,
+        voice_aliases=args.voice_alias,
     )
     print(f"kova-tts {__version__} serving on http://{args.host}:{args.port}", file=sys.stderr)
     uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level)

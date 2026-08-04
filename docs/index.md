@@ -71,8 +71,12 @@ memory-bound, so it tracks bandwidth closely.
 | Decode throughput, eager fallback | ~58 codes/second (~0.72x real time) |
 | Speedup from the CUDA graph | 5.7x |
 | Time to first audio, warm, in-process | ~190 ms |
-| Time to first audio, warm, over WebSocket | ~200 ms |
+| Time to first audio, warm, over WebSocket, text already sent | ~200 ms |
 | Time to first audio, warm, over SSE | ~230 ms |
+
+Over a WebSocket the figure above is a floor, not a forecast: a session speaks as its text
+arrives, so a client that is still receiving the text waits for the text as much as for the GPU.
+[When to flush](server.md#when-to-flush) has that measured end to end.
 
 The first generation in a process is much slower than these: the codec is loaded lazily on first
 use and cuDNN autotunes its convolutions then. See [Quickstart](quickstart.md#what-warm-means).

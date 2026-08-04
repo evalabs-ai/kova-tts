@@ -8,9 +8,6 @@ exactly rather than sampled.
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import numpy as np
 import pytest
 import torch
@@ -276,8 +273,8 @@ def test_a_captured_graph_actually_records_work():
 def test_capturing_on_a_second_device_records_on_that_device():
     """``torch.cuda.graph`` keeps *one* process-wide capture stream, built on whichever device
     captured first. Without an explicit per-device stream the second generator captures an
-    empty graph and silently generates nonsense -- which is exactly what happened, and only
-    showed up as one decoder test failing in a full-suite run."""
+    empty graph and silently generates nonsense: replay is a no-op, so the logits stay frozen
+    at whatever the capture saw."""
     if torch.cuda.device_count() < 2:
         pytest.skip("needs two CUDA devices")
     params = TTS_SAMPLING.replace(max_tokens=16)
@@ -300,23 +297,12 @@ def _eager(generator: Generator, prompt: str, params) -> list[int]:
 # ------------------------------------------------------------------------ the real checkpoint
 
 
-def _free_cuda_device() -> torch.device:
-    """The CUDA device with the most free memory. This box has two and another job may own one."""
-    if not torch.cuda.is_available():
-        pytest.skip("no CUDA device")
-    best = max(range(torch.cuda.device_count()), key=lambda i: torch.cuda.mem_get_info(i)[0])
-    return torch.device("cuda", best)
-
-
 @pytest.fixture(scope="module")
-def real_generator() -> Generator:
+def real_generator(cuda_device, local_artifact) -> Generator:
     from kova_tts import paths
 
-    paths.load_dotenv()
-    configured = os.environ.get(paths.ENV_MODEL, "").strip()
-    if not configured or not Path(configured).is_dir():
-        pytest.skip(f"set {paths.ENV_MODEL} to a local checkpoint to run this test")
-    return Generator.from_pretrained(configured, device=_free_cuda_device(), max_cache_len=1024)
+    model = local_artifact(paths.ENV_MODEL)
+    return Generator.from_pretrained(model, device=cuda_device, max_cache_len=1024)
 
 
 @pytest.fixture(scope="module")

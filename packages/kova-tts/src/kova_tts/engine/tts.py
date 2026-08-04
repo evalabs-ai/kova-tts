@@ -11,6 +11,11 @@ Audio is float32 mono numpy at 32 kHz, everywhere. :meth:`stream` yields
 :class:`~kova_tts.engine.types.AudioFrame` as the codec produces it, which is the same audio
 :meth:`generate` returns, cut into ~390 ms pieces.
 
+Both take ``sample_rate=`` for callers that need something other than 32 kHz -- 16 kHz for a
+voice-agent pipeline, 8 kHz for telephony. The two paths share one filter
+(:mod:`kova_tts.audio`), and the streaming one carries its state across frames, so asking for a
+rate does not change which audio you get, only how it is sampled.
+
 Three behaviours worth knowing about before reading the code:
 
 **Long text is generated chunk by chunk**, with the previous chunk threaded into the next
@@ -24,10 +29,10 @@ twice, so the audio runs straight through the boundary. :data:`MAX_SEGMENT_CHARS
 chunk is sized so that the codes it generates always fit the carry.
 
 **A cloned voice re-renders its reference clip first.** The reference codes lead the
-continuation, so the audio for them is produced before a single word of the target text. The
-whole reference is pushed through the codec (the decoder's LSTM and first convolution then
-start from real context instead of from silence) and the first ``Voice.ref_seconds`` of the
-result are dropped. Getting this wrong is inaudible in the code and very audible in the output.
+continuation, so the audio for them is produced before a single word of the target text. Those
+codes are pushed through the codec -- the decoder's LSTM and first convolution then start from
+real context instead of from silence -- and exactly the audio they account for is dropped
+again. Getting that count wrong is inaudible in the code and very audible in the output.
 
 **Sampling follows the voice.** Cloning uses :data:`~kova_tts.engine.types.CLONE_SAMPLING`,
 plain synthesis :data:`~kova_tts.engine.types.TTS_SAMPLING`; pass ``params=`` to override.
@@ -64,10 +69,10 @@ from kova_tts.tokens import BEGIN_OF_TEXT
 
 log = logging.getLogger(__name__)
 
-#: Codes the model emits per character of text. Ordinary prose at the chunk size below measures
-#: 4.1 to 5.0, and short fragments run higher because the leading and trailing silence is a
-#: fixed cost paid by however few characters there are. This is deliberately a bound with margin
-#: rather than the average: underestimating it costs a carry, silently.
+#: Codes the model emits per character of text. A bound with margin rather than an average:
+#: ordinary prose at the chunk size below runs 4.1 to 5.0, short fragments higher because the
+#: leading and trailing silence is a fixed cost paid by however few characters there are.
+#: Underestimating it costs a carry, silently.
 CODES_PER_CHAR = 6.0
 
 #: Longest chunk handed to the model in one generation. Whole sentences are packed up to this,
@@ -78,10 +83,9 @@ MAX_SEGMENT_CHARS = 160
 #: Longest previous chunk carried into the next prompt, in codes -- twelve seconds of audio.
 #: **Derived from** :data:`MAX_SEGMENT_CHARS` rather than chosen: the carry is a matched pair
 #: (the chunk's text *and* all of its codes), so it cannot be truncated to a tail without the
-#: two drifting apart, and the only way to keep it alive is to size the chunk so that it fits.
-#: As an independent number this was 640 -- about 140 characters, against a splitter emitting
-#: 300 -- so every chunk of realistic prose was dropped from the carry and every chunk after the
-#: first was generated cold. Keep the two tied together.
+#: two drifting apart. Sizing the chunk so that its codes always fit is the only way to keep the
+#: carry alive; set independently, a limit below what a chunk generates drops every carry and
+#: leaves every chunk after the first generated cold.
 MAX_CARRY_CODES = math.ceil(MAX_SEGMENT_CHARS * CODES_PER_CHAR)
 
 #: A trailing chunk shorter than this is merged into the one before it: "Dr." or "Yes." on its
@@ -118,10 +122,10 @@ def _ref_text(voice: Voice | None) -> str:
 def _warm_codec(codec) -> None:
     """Run one throwaway utterance through the codec so cuDNN picks its algorithms now.
 
-    The decoder's first convolution and LSTM autotune on first use, which costs a few hundred
-    milliseconds. Unwarmed, that lands on the first streamed frame -- the one measurement a
-    streaming caller actually feels. Both decode paths are exercised because they use different
-    kernels: windowed with LSTM state carried, and whole-utterance.
+    The decoder's first convolution and LSTM autotune on first use, at a cost of a few hundred
+    milliseconds. Left to happen lazily, that lands on the first streamed frame. Both decode
+    paths are exercised because they use different kernels: windowed with LSTM state carried,
+    and whole-utterance.
     """
     codes = [0] * (2 * (WINDOW + 2 * LOOKAHEAD + CONV_PADDING))
     decoder = StreamingDecoder(codec)
@@ -289,8 +293,15 @@ class KovaTTS:
         *,
         params: SamplingParams | None = None,
         seed: int | None = None,
+        sample_rate: int | None = None,
     ) -> np.ndarray:
-        """Synthesize `text` and return the whole waveform: float32 mono at 32 kHz."""
+        """Synthesize `text` and return the whole waveform: float32 mono.
+
+        `sample_rate` defaults to the model's native 32 kHz. Any other rate is converted on the
+        way out with :func:`kova_tts.audio.resample`, which is the same filter :meth:`stream`
+        applies, so the two return the same audio at any rate.
+        """
+        out_rate = self._output_rate(sample_rate)
         resolved = self._prepare(voice)
         params = self._sampling(resolved, params, seed)
         codes = self._generate_codes(text, resolved, params)
@@ -298,12 +309,15 @@ class KovaTTS:
             return np.zeros(0, dtype=np.float32)
 
         if resolved is not None and resolved.is_clone:
-            # Decode the reference and the new speech as one utterance so the decoder starts
-            # warm, then drop the reference again.
+            # Decode the preroll and the new speech as one utterance so the decoder starts warm,
+            # then drop the preroll again. The trim happens at the native rate, before any
+            # conversion: it is a count of codes, and codes only exist at that rate.
             preroll = self._preroll(resolved)
             wav = decode_all(self.codec, list(preroll) + codes)
-            return audio_io.trim_leading(wav, codes_to_seconds(len(preroll)), self.sample_rate)
-        return decode_all(self.codec, codes)
+            wav = audio_io.trim_leading(wav, codes_to_seconds(len(preroll)), self.sample_rate)
+        else:
+            wav = decode_all(self.codec, codes)
+        return audio_io.resample(wav, self.sample_rate, out_rate)
 
     def stream(
         self,
@@ -312,23 +326,46 @@ class KovaTTS:
         *,
         params: SamplingParams | None = None,
         seed: int | None = None,
+        sample_rate: int | None = None,
     ) -> Iterator[AudioFrame]:
         """Synthesize `text`, yielding audio as it is decoded.
 
         Frames are ~390 ms apart in steady state. The last frame always carries
         ``is_final=True``, even when it holds no samples, so a consumer can close cleanly.
+        ``AudioFrame.sample_rate`` is always the rate actually delivered.
+
+        `sample_rate` defaults to the model's native 32 kHz. Any other rate goes through a
+        :class:`~kova_tts.audio.StreamingResampler`, whose filter state crosses the frame
+        boundaries -- resampling each frame on its own instead would leave a step at every join,
+        two or three times a second. Its tail is flushed into the final frame, so no samples are
+        lost at the end.
         """
+        out_rate = self._output_rate(sample_rate)
         resolved = self._prepare(voice)
         params = self._sampling(resolved, params, seed)
         decoder = StreamingDecoder(self.codec)
         if resolved is not None and resolved.is_clone:
             decoder.prime(self._preroll(resolved))
+        resampler = audio_io.StreamingResampler(self.sample_rate, out_rate)
 
         for codes in self._stream_codes(text, resolved, params):
-            chunk = decoder.push(codes)
+            chunk = resampler.process(decoder.push(codes))
             if chunk.size:
-                yield AudioFrame(chunk, self.sample_rate)
-        yield AudioFrame(decoder.finish(), self.sample_rate, is_final=True)
+                yield AudioFrame(chunk, out_rate)
+        tail = resampler.process(decoder.finish())
+        remainder = resampler.flush()
+        if remainder.size:
+            tail = np.concatenate((tail, remainder))
+        yield AudioFrame(tail, out_rate, is_final=True)
+
+    def _output_rate(self, sample_rate: int | None) -> int:
+        """Validate a requested output rate, defaulting to the model's own."""
+        if sample_rate is None:
+            return self.sample_rate
+        rate = int(sample_rate)
+        if rate <= 0:
+            raise ValueError(f"sample_rate must be positive, got {sample_rate}.")
+        return rate
 
     def save(
         self,
@@ -376,10 +413,9 @@ class KovaTTS:
         start of the continuation. The byte layout is :mod:`kova_tts.prompt`'s and nothing
         else's, so it cannot drift from what the checkpoint was trained on.
 
-        Text and codes are carried **together**. Carrying codes alone -- the shape a
-        code-only continuation would take -- reliably makes the model emit ``<|speech_end|>``
-        on the first step: it has been handed several seconds of speech for a sentence it has
-        not started, so as far as it can tell the sentence is already finished.
+        Text and codes are carried **together**. Codes alone make the model emit
+        ``<|speech_end|>`` on the first step: it has been handed several seconds of speech for a
+        sentence it has not started, so as far as it can tell the sentence is already finished.
         """
         prefix = " ".join(p for p in (_ref_text(voice), prior.text if prior else "") if p)
         codes = tuple(voice.ref_codes if voice and voice.is_clone else ()) + (
@@ -548,13 +584,15 @@ def generate(
     out: str | os.PathLike[str] | None = None,
     params: SamplingParams | None = None,
     seed: int | None = None,
+    sample_rate: int | None = None,
 ) -> np.ndarray:
     """Synthesize `text` with the cached model, optionally writing it to `out`.
 
     >>> generate("Hello world.", out="out.wav")
     """
     tts = load()
-    wav = tts.generate(text, voice, params=params, seed=seed)
+    wav = tts.generate(text, voice, params=params, seed=seed, sample_rate=sample_rate)
     if out is not None:
-        tts.save(wav, out)
+        # The file has to state the rate the samples are actually at, not the model's.
+        tts.save(wav, out, sample_rate)
     return wav

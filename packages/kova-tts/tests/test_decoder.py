@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
+from collections.abc import Iterator
 
 import numpy as np
 import pytest
@@ -14,16 +13,30 @@ from kova_tts.engine.decoder import (
     CONV_PADDING,
     LOOKAHEAD,
     WINDOW,
+    DecodeWindow,
     StreamingDecoder,
     decode_all,
     plan_window,
-    plan_windows,
 )
 
 #: Real codes a steady-state window needs before it can be decoded: what it emits, plus the
 #: right-hand lookahead, plus the convolution's context. Spelled out rather than imported, so a
 #: change to the window constants has to be reckoned with here too.
 FIRST_WINDOW_CODES = WINDOW + 2 * LOOKAHEAD + CONV_PADDING
+
+
+def plan_windows(total: int) -> Iterator[DecodeWindow]:
+    """Every window a finished stream of `total` codes decodes through, in order.
+
+    The sequence :class:`StreamingDecoder` walks, without a codec in the way, so the tiling can
+    be checked on its own.
+    """
+    position = 0
+    while (plan := plan_window(position, total, finished=True)) is not None:
+        yield plan
+        if plan.is_last:
+            return
+        position += plan.advance
 
 
 # --------------------------------------------------------------------------- window arithmetic
@@ -101,8 +114,8 @@ class TestStreamingReadiness:
         assert plan_window(0, 30, finished=True) is not None
 
     def test_an_unfinished_window_is_never_short(self):
-        """The bug this guards: counting a trailing pad that only exists once the stream ends
-        fires the window three codes early, and its last frames drift by up to 0.05."""
+        """A window must not count a trailing pad that only exists once the stream ends:
+        firing three codes early drifts the window's last frames by up to 0.05."""
         width = WINDOW + 2 * LOOKAHEAD + 2 * CONV_PADDING
         for available in range(FIRST_WINDOW_CODES, 400):
             plan = plan_window(31, available, finished=False)
@@ -126,77 +139,118 @@ class TestStreamingDecoderBookkeeping:
             audio = trimmed.repeat_interleave(HOP_LENGTH, dim=1).float()
             return audio, (None if return_lstm_state is None else torch.zeros(1))
 
+    @pytest.fixture
+    def decoder(self) -> StreamingDecoder:
+        return StreamingDecoder(self._FakeCodec())
+
     def frames(self, audio: np.ndarray) -> list[int]:
         return audio.reshape(-1, HOP_LENGTH)[:, 0].astype(int).tolist()
 
-    def test_pushed_codes_come_back_in_order_exactly_once(self):
-        decoder = StreamingDecoder(self._FakeCodec())
+    def test_pushed_codes_come_back_in_order_exactly_once(self, decoder):
         codes = list(range(1, 201))
         out = [decoder.push([c]) for c in codes]
         out.append(decoder.finish())
         assert self.frames(np.concatenate([o for o in out if o.size])) == codes
 
-    def test_priming_discards_exactly_the_primed_audio(self):
-        decoder = StreamingDecoder(self._FakeCodec())
+    def test_priming_discards_exactly_the_primed_audio(self, decoder):
         decoder.prime([9999] * 40)
         pieces = [decoder.push([c]) for c in range(1, 121)]
         pieces.append(decoder.finish())
         got = self.frames(np.concatenate([p for p in pieces if p.size]))
         assert got == list(range(1, 121))
 
-    def test_priming_after_real_codes_is_refused(self):
-        decoder = StreamingDecoder(self._FakeCodec())
+    def test_priming_after_real_codes_is_refused(self, decoder):
         decoder.push([1, 2, 3])
         with pytest.raises(RuntimeError, match="before the first push"):
             decoder.prime([4])
 
-    def test_finish_is_idempotent_and_closes_the_decoder(self):
-        decoder = StreamingDecoder(self._FakeCodec())
+    def test_finish_is_idempotent_and_closes_the_decoder(self, decoder):
         decoder.push(range(10))
         decoder.finish()
         assert decoder.finish().size == 0
         with pytest.raises(RuntimeError, match="reset"):
             decoder.push([1])
 
-    def test_reset_starts_a_fresh_utterance(self):
-        decoder = StreamingDecoder(self._FakeCodec())
+    def test_reset_starts_a_fresh_utterance(self, decoder):
         decoder.push(range(1, 100))
         decoder.finish()
         decoder.reset()
         out = [decoder.push(range(1, 60)), decoder.finish()]
         assert self.frames(np.concatenate([o for o in out if o.size])) == list(range(1, 60))
 
-    def test_empty_input_decodes_to_nothing(self):
-        decoder = StreamingDecoder(self._FakeCodec())
+    def test_empty_input_decodes_to_nothing(self, decoder):
         assert decoder.push([]).size == 0
         assert decoder.finish().size == 0
+
+
+# ----------------------------------------------------------------------------- rate conversion
+
+
+class ToneCodec:
+    """Decodes code `c` to the 400 samples of a tone at position `c`.
+
+    Position-aware, so a run of consecutive codes decodes to one continuous waveform however it
+    is cut into windows. That is what lets a discontinuity in the output be attributed to the
+    code under test rather than to the stand-in.
+    """
+
+    device = torch.device("cpu")
+    sample_rate = 32_000
+
+    @staticmethod
+    def _tone(codes: torch.Tensor) -> torch.Tensor:
+        offsets = codes[..., None] * HOP_LENGTH + torch.arange(HOP_LENGTH)
+        return 0.5 * torch.sin(2 * np.pi * 220.0 * offsets / 32_000).flatten(-2)
+
+    def decode(self, codes: torch.Tensor) -> torch.Tensor:
+        return self._tone(codes)
+
+    def decode_with_lstm(self, codes, state=None, return_lstm_state=None, conv_padding=None):
+        trimmed = codes[:, conv_padding:-conv_padding] if conv_padding else codes
+        return self._tone(trimmed), (None if return_lstm_state is None else torch.zeros(1))
+
+
+class TestRateConversionOverWindows:
+    """Window cadence meets rate conversion. The decoder emits a chunk every ~390 ms, and each
+    chunk boundary is a place a stateless resampler would leave a step."""
+
+    CODES = list(range(600))  # 7.5 seconds, ~19 windows
+
+    def streamed(self, rate: int) -> tuple[np.ndarray, np.ndarray]:
+        """Chunked decode + conversion, and where the chunk joins landed in the output."""
+        from kova_tts.audio import StreamingResampler
+
+        decoder = StreamingDecoder(ToneCodec())
+        resampler = StreamingResampler(32_000, rate)
+        pieces = [resampler.process(decoder.push([code])) for code in self.CODES]
+        pieces.append(resampler.process(decoder.finish()))
+        pieces.append(resampler.flush())
+        pieces = [p for p in pieces if p.size]
+        return np.concatenate(pieces), np.cumsum([p.size for p in pieces])[:-1]
+
+    @pytest.mark.parametrize("rate", [16_000, 24_000, 8_000, 44_100])
+    def test_chunked_decode_and_conversion_equals_doing_both_at_once(self, rate):
+        from kova_tts.audio import resample
+
+        whole = resample(decode_all(ToneCodec(), self.CODES), 32_000, rate)
+        got, _ = self.streamed(rate)
+        assert got.shape == whole.shape
+        np.testing.assert_allclose(got, whole, rtol=0, atol=1e-6)
+
+    @pytest.mark.parametrize("rate", [16_000, 8_000])
+    def test_the_chunk_joins_are_not_visible_in_the_waveform(self, rate):
+        got, joins = self.streamed(rate)
+        steps = np.abs(np.diff(got))
+        joins = joins[(joins > 0) & (joins < got.size)]
+        assert joins.size > 5, "this many codes should produce more chunks than that"
+        assert steps[joins - 1].max() <= np.percentile(steps, 99.9)
 
 
 # ------------------------------------------------------------------------------- with the codec
 
 
-def _free_cuda_device() -> torch.device:
-    """The CUDA device with the most free memory. This box has two and another job may own one."""
-    if not torch.cuda.is_available():
-        pytest.skip("no CUDA device")
-    best = max(range(torch.cuda.device_count()), key=lambda i: torch.cuda.mem_get_info(i)[0])
-    return torch.device("cuda", best)
-
-
-def _local_checkpoint(env_var: str) -> str:
-    """A locally configured artifact path, or skip. Never downloads: a test that needs
-    gigabytes of weights should say so rather than fetching them behind the runner's back."""
-    from kova_tts import paths
-
-    paths.load_dotenv()
-    configured = os.environ.get(env_var, "").strip()
-    if not configured or not Path(configured).exists():
-        pytest.skip(f"set {env_var} to a local checkpoint to run this test")
-    return configured
-
-
 @pytest.fixture(scope="module")
-def codec():
+def codec(cuda_device, local_artifact):
     """An encode-capable codec, so the test can build *realistic* codes to decode.
 
     The seam error is entirely signal-dependent -- codes drawn at random decode to something
@@ -206,9 +260,9 @@ def codec():
     from kova_tts import paths
     from kova_tts.engine.decoder import load_codec
 
-    checkpoint = _local_checkpoint(paths.ENV_CODEC)
-    wavlm = _local_checkpoint(paths.ENV_WAVLM)
-    return load_codec(checkpoint, device=_free_cuda_device(), encode=True, wavlm=wavlm)
+    checkpoint = local_artifact(paths.ENV_CODEC)
+    wavlm = local_artifact(paths.ENV_WAVLM)
+    return load_codec(checkpoint, device=cuda_device, encode=True, wavlm=wavlm)
 
 
 @pytest.fixture(scope="module")

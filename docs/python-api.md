@@ -17,7 +17,9 @@ Two, and they hold everywhere.
 
 **Audio is a 1-D float32 numpy array, mono, nominally in [-1, 1], at 32 kHz.** Not a tensor, not
 a tuple, not interleaved stereo. `kova_tts.audio.as_waveform` coerces anything close to that
-form; the codec's rate is `tts.sample_rate`, and it is always 32000.
+form; the codec's rate is `tts.sample_rate`, and it is always 32000. `generate` and `stream`
+take `sample_rate=` when you need something else — see
+[Output sample rates](#output-sample-rates).
 
 **Codes are Python ints in `[0, 8191]`.** 80 of them per second of audio.
 
@@ -62,14 +64,14 @@ Keyword arguments are honoured only on the call that actually loads the model.
 ### Synthesis
 
 ```python
-generate(text, voice=None, *, params=None, seed=None) -> np.ndarray
-stream(text, voice=None, *, params=None, seed=None) -> Iterator[AudioFrame]
+generate(text, voice=None, *, params=None, seed=None, sample_rate=None) -> np.ndarray
+stream(text, voice=None, *, params=None, seed=None, sample_rate=None) -> Iterator[AudioFrame]
 save(wav, path, sample_rate=None) -> Path
 ```
 
 `voice` is `None` (the base voice), a LoRA voice name, or a `Voice` from `clone`. `params` is a
 `SamplingParams`; leaving it `None` lets the voice pick its own preset, which is what you want.
-`seed` fixes the sampler.
+`seed` fixes the sampler. `sample_rate` defaults to the model's own 32 kHz.
 
 `stream` yields `AudioFrame` about every 390 ms and always ends with `is_final=True`.
 Concatenating every frame's samples reproduces `generate`'s output.
@@ -79,6 +81,31 @@ import numpy as np
 frames = [f.samples for f in tts.stream("Two sentences. Streamed as they decode.")]
 wav = np.concatenate(frames) if frames else np.zeros(0, dtype=np.float32)
 ```
+
+### Output sample rates
+
+The model is native 32 kHz. Voice-agent pipelines usually run at 16 kHz and telephony at 8 kHz,
+so pass the rate you want and let the library convert:
+
+```python
+wav = tts.generate("Hello world.", sample_rate=16_000)
+
+for frame in tts.stream("Hello world.", sample_rate=8_000):
+    send(frame.samples, frame.sample_rate)        # sample_rate is the rate delivered
+```
+
+Both paths use one windowed-sinc polyphase filter, and `stream` carries its state across frames.
+That matters more than it sounds: resampling each frame on its own restarts the filter at every
+frame boundary, and the step it leaves behind is an audible click two or three times a second.
+Here `stream(sample_rate=r)` concatenated is equal to `generate(sample_rate=r)`, sample for
+sample, and both are equal to `torchaudio.functional.resample` of the whole 32 kHz waveform.
+
+For a cloned voice the reference trim happens before the conversion, so the output starts at the
+same word whatever rate you ask for.
+
+If you have a finished waveform and want the rate changed, `kova_tts.audio.resample` is the same
+filter. If you are converting a stream that did not come from `stream()`, use
+`kova_tts.audio.StreamingResampler` rather than calling `resample` per chunk.
 
 !!! warning "One generation at a time"
 
@@ -134,7 +161,9 @@ SamplingParams(temperature=1.1, top_p=0.9, top_k=75, repetition_penalty=1.1,
 Frozen and validated: `temperature > 0`, `0 < top_p <= 1`, `top_k >= 0` (0 disables it),
 `repetition_penalty > 0`, `max_tokens > 0`. `replace(**overrides)` returns a re-validated copy.
 
-Two presets ship. They were tuned separately during development and are not interchangeable:
+Two presets ship. They sample identically; `CLONE_SAMPLING` differs only in `max_tokens` (3500
+against 2048), because a clone prompt spends part of its budget on the reference clip before it
+reaches your text:
 
 ```python
 from kova_tts import CLONE_SAMPLING, TTS_SAMPLING
@@ -142,8 +171,7 @@ TTS_SAMPLING.replace(temperature=0.8)
 SamplingParams.for_cloning(top_k=30)      # same thing, spelled as a classmethod
 ```
 
-The model is sensitive to these. Change one knob at a time, and see
-[Voice cloning](voice-cloning.md#sampling) for why the two presets differ as much as they do.
+The model is sensitive to these values. Change one knob at a time.
 
 Greedy decoding is not expressible — temperature must be positive. The generator has a `greedy=`
 flag used by tests to compare the CUDA graph and eager paths exactly.
@@ -165,16 +193,81 @@ frame.duration_seconds
 |---|---|
 | `load_audio(path, sample_rate=32000)` | Read any `soundfile` format as mono float32 at a rate |
 | `as_waveform(wav)` | Coerce to 1-D float32 mono, downmixing 2-D input |
-| `resample(wav, orig_rate, target_rate)` | Polyphase resampling |
+| `resample(wav, orig_rate, target_rate)` | Polyphase resampling of a finished waveform |
+| `StreamingResampler(orig_rate, target_rate)` | The same filter, for a stream |
 | `normalize_loudness(wav, sample_rate, target_lufs=-23.0)` | ITU-R BS.1770 with a peak limiter |
 | `trim_leading(wav, seconds, sample_rate)` | Drop the first N seconds |
 | `to_pcm_bytes(wav)` | 16-bit little-endian PCM, what the streaming server sends |
 | `to_wav_bytes(wav, sample_rate)` | A complete WAV file in memory |
 | `save_wav(path, wav, sample_rate)` | Write 16-bit WAV, creating the directory |
+| `encode_audio(wav, sample_rate, fmt)` | Encode a whole waveform into a container |
+| `StreamingEncoder(fmt, sample_rate)` | The same, incrementally |
+| `content_type(fmt)` | Media type to send in `Content-Type` |
+| `container_rate(fmt, sample_rate)` | The rate a format will actually be written at |
+| `streaming_wav_header(sample_rate)` | 44-byte RIFF header with placeholder sizes |
 
 `normalize_loudness` is not cosmetic: the training clips were normalised to −23 LUFS with
 exactly this procedure, and the codec's semantic features are not level-invariant. It leaves
 silent, unmeasurable and sub-400 ms clips alone rather than applying an infinite gain.
+
+`to_pcm_bytes` scales negative samples by 32768 and non-negative ones by 32767, because
+full-scale `int16` is asymmetric. One shared factor either leaves −1.0 a step short of the rail
+or wraps +1.0 round to −32768.
+
+### Encoding
+
+```python
+from kova_tts.audio import SUPPORTED_FORMATS, content_type, encode_audio
+
+encode_audio(wav, 32_000, "mp3")     # -> bytes
+content_type("mp3")                  # 'audio/mpeg'
+```
+
+| `fmt` | | `content_type` |
+|---|---|---|
+| `pcm` | Raw 16-bit little-endian samples, no container and no stated rate | `application/octet-stream` |
+| `wav` | 16-bit RIFF | `audio/wav` |
+| `mp3` | MPEG-1 layer III | `audio/mpeg` |
+| `flac` | Lossless | `audio/flac` |
+| `opus` | Opus in an Ogg container | `audio/ogg` |
+
+All five come from the libsndfile that `soundfile` already bundles — no ffmpeg, no extra
+dependency. **Check `SUPPORTED_FORMATS` rather than that table**: it is probed at import from
+what this install can actually write, since MPEG support only arrived in libsndfile 1.1 and a
+wheel may carry an older one. An unavailable or unknown format raises with the available list in
+the message; `aac` is not something libsndfile writes at all and is refused.
+
+MP3 and Opus are each defined only for a fixed set of sample rates, and 32 kHz is not one of
+Opus's. `container_rate(fmt, rate)` reports what a format will really be written at — audio is
+resampled to it, and the container states it, so the result plays at the right speed either way.
+
+### Encoding a stream
+
+```python
+from kova_tts.audio import STREAMING_FORMATS, StreamingEncoder
+
+encoder = StreamingEncoder("mp3", 32_000)
+for frame in tts.stream(text):
+    if data := encoder.encode(frame.samples):
+        send(data)
+send(encoder.finish())
+```
+
+`encode` returns whatever bytes the codec has produced, which may be nothing on the first call —
+a frame-based codec cannot emit anything until it has a frame. It never holds the utterance.
+
+`pcm` and `wav` add zero latency (`wav` is `streaming_wav_header` followed by the samples). `mp3`
+and `flac` produce bytes on the first chunk at the streaming decoder's cadence. **`opus` does
+not**, and is deliberately absent from `STREAMING_FORMATS`: libsndfile emits an Ogg page only
+once the page is full, about a second of speech, so opus bytes arrive in bursts a second apart
+however finely audio is fed in. Encode opus with `encode_audio` when the audio is complete.
+
+What a streaming encoder produces is a *stream*, not a saved file. Both `wav` and `flac` state
+"length unknown" at the front, because the length is not known when those bytes go out — legal,
+and what a stream is supposed to say, but a file written from it will not report its duration and
+may not seek. MP3 additionally carries the codec's 1105-sample priming delay (35 ms at 32 kHz),
+since the tag that tells a decoder to drop it is written at close. Every encoded frame is
+otherwise identical to `encode_audio`'s. When the audio is already in hand, use `encode_audio`.
 
 ## Prompts and tokens
 

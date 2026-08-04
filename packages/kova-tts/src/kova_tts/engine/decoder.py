@@ -11,8 +11,7 @@ Everything after the LSTM has a finite receptive field to the right, so each win
 decoded with :data:`LOOKAHEAD` frames of future codes that are computed and thrown away. What
 is left, :data:`WINDOW` frames, is bit-comparable with a whole-utterance decode.
 
-Two failure modes are baked into the window arithmetic here, both measured during the codec
-port:
+Two failure modes are baked into the window arithmetic here:
 
 1. **Never emit audio the LSTM produced from padding.** If the final window runs past the last
    real code and that audio is emitted, its last ~20 frames drift from a whole-utterance decode
@@ -23,14 +22,14 @@ port:
    the window at ``x[:k]`` / ``x[k:]``, so a window whose conv-trimmed length is exactly ``k``
    makes the second half empty and torch raises ``Expected sequence length to be larger than 0
    in RNN``. The invariant that avoids it -- a non-final window always has more than
-   :data:`WINDOW` frames of output -- is asserted in :func:`plan_window` rather than left to
-   luck, because it only holds while ``lookahead >= 1``.
+   :data:`WINDOW` frames of output -- holds only while ``lookahead >= 1``, so
+   :func:`plan_window` asserts it.
 """
 
 from __future__ import annotations
 
 import os
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -150,31 +149,6 @@ def plan_window(
         return_state_at=None,
         is_last=True,
     )
-
-
-def plan_windows(
-    total: int,
-    *,
-    window: int = WINDOW,
-    lookahead: int = LOOKAHEAD,
-    conv_padding: int = CONV_PADDING,
-) -> Iterator[DecodeWindow]:
-    """Every window needed to decode `total` codes, in order."""
-    position = 0
-    while (
-        plan := plan_window(
-            position,
-            total,
-            finished=True,
-            window=window,
-            lookahead=lookahead,
-            conv_padding=conv_padding,
-        )
-    ) is not None:
-        yield plan
-        if plan.is_last:
-            return
-        position += plan.advance
 
 
 class StreamingDecoder:

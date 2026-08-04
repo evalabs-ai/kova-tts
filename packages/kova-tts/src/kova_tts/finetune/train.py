@@ -282,7 +282,7 @@ def _prepare_run_dir(config: FinetuneConfig) -> Path:
 def _configure_wandb(config: FinetuneConfig) -> None:
     """Point wandb at the configured project. Nothing is hardcoded and nothing runs when off."""
     if not config.wandb.enabled:
-        # Belt and braces: wandb auto-initialises from a stale environment otherwise.
+        # Without this wandb auto-initialises from a stale environment.
         os.environ.setdefault("WANDB_DISABLED", "true")
         return
     os.environ["WANDB_PROJECT"] = config.wandb.project or ""

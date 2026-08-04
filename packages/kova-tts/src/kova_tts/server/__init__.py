@@ -6,6 +6,10 @@ Three ways to ask for the same audio:
 * ``POST /v1/tts/stream`` -- Server-Sent Events, base64 PCM chunks as the codec produces them;
 * ``WS /v1/ws`` -- an incremental session: send text as you have it, flush when you want audio.
 
+...and a fourth for tools that already speak somebody else's API: ``POST /v1/audio/speech``,
+OpenAI's shape, in :mod:`kova_tts.server.openai_api`. It is a compatibility surface over the
+same engine, not a replacement for the three above, and it deprecates none of them.
+
 This is a **single-user local server by design**. The LM generator holds one static KV cache and
 one set of CUDA graph buffers, so exactly one generation can be in flight; the server serialises
 on a lock and refuses a genuinely concurrent second caller with ``409`` rather than queueing it.

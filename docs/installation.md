@@ -13,7 +13,8 @@
 ### Choosing a GPU on a multi-GPU machine
 
 Everything that takes a device — `--device cuda:1`, `CUDA_VISIBLE_DEVICES`, `KovaTTS(device=...)`
-— names a **torch** device index.
+— names a **torch** device index. `CUDA_VISIBLE_DEVICES` picks the same card `cuda:1` would, but
+it also renumbers what is left, so the process then sees that card as `cuda:0`.
 
 !!! warning "`nvidia-smi`'s GPU number is not torch's `cuda:N`"
 
