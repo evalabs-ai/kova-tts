@@ -27,21 +27,29 @@ Hub. If the page says it cannot find the weights, `uv run kova-tts paths` shows 
 
 ## What is on the page
 
-**Speak.** Text box, voice picker, seed, and a Speak button. Audio appears in two players: the
-top one streams — it starts playing after the first ~390 ms frame is decoded, while the rest of
-the sentence is still being generated — and the lower one holds the finished clip for scrubbing
-and downloading. The line underneath reports time to first audio, how much speech was produced
-in how long, and the seed that produced it, so a result you like can be reproduced by typing
-that seed back in.
+**Speak.** Text box, voice picker, seed, and a Speak button. Sound starts after the first
+~390 ms frame is decoded and runs continuously to the end of the utterance, while the later
+sentences are still being generated. Stop halts it at once and leaves everything ready to go
+again. When the generation finishes, the same audio appears in a normal player below the
+progress bar, for scrubbing and downloading — it is built in the browser from the frames it
+already received, so nothing is generated or encoded twice. The line underneath reports time to
+first audio, how much speech was produced in how long, and the seed that produced it, so a
+result you like can be reproduced by typing that seed back in.
 
 **Advanced** (collapsed) holds temperature, top-p, top-k, repetition penalty and the token
 budget. They start at the tuned preset, and switching voice resets them to the preset that voice
-calls for — cloning wants a hotter, much less penalised setting than plain synthesis. You should
-not have to open this accordion at all.
+calls for — the cloning preset differs only in giving the model a larger token budget. You
+should not have to open this accordion at all.
 
-**Clone a voice.** Upload or record five to twenty seconds of clean speech, optionally type the
-transcript, and press Clone. The voice appears in the picker on the Speak tab immediately. Left
-without a transcript the recording is transcribed automatically, which needs the `data` extra
+**Clone a voice.** The tab shows a short passage to read aloud, with the transcript already
+filled in to match it — record yourself reading it, press Clone, and there is nothing to type
+and nothing to transcribe. "Different script" rotates through the passages, and leaves a
+transcript you typed yourself alone. The voice appears in the picker on the Speak tab
+immediately.
+
+Bringing your own recording works too: replace the transcript with exactly what it says, because
+cloning *continues* the reference and a transcript that does not match garbles the output. Left
+empty, the recording is transcribed automatically, which needs the `data` extra
 (`uv sync --extra data`); the demo says so plainly if it is missing. Clones live in memory for
 the life of the process and are never written to disk.
 
@@ -51,17 +59,58 @@ the life of the process and are never written to disk.
   requests, so the demo serializes them and tells a second visitor to wait rather than showing
   them a traceback.
 - **On a CPU it is very slow.** The banner says so; a CUDA device is what this is for.
-- Long text is generated sentence by sentence with the previous sentence carried into the next
-  prompt, which is why the joins hold together. The demo accepts about 1200 characters at a
-  time; use the Python API for anything longer.
+- Long text is generated chunk by chunk — a few short sentences at a time — with the previous
+  chunk carried into the next prompt, which is why the joins hold together. The demo accepts
+  about 1200 characters at a time; use the Python API for anything longer.
+
+## How the audio reaches your speakers
+
+Worth knowing, because it is the one thing in here that is not stock Gradio.
+
+Gradio's streaming audio component does not send the samples it is given. It re-encodes every
+yielded frame to AAC with ffmpeg and serves the result as HLS segments — a lossy codec applied
+2.5 times a second, each segment carrying its own encoder priming. Streamed through it, a
+generation clicks and rasps; the finished clip of that same generation is clean.
+
+So the page does not use it. `apps/demo/player.js` POSTs to `/v1/tts/stream` — the same
+server-sent-event protocol [the server](../../docs/server.md) documents, `chunk` events carrying
+base64 16-bit PCM — decodes each frame to a `Float32Array`, and hands it to Web Audio as an
+`AudioBufferSourceNode` scheduled at a running cursor. Frames abut to the sample, nothing is
+re-encoded between the codec and the speakers, and the wav you download is those same frames
+with a 44-byte header in front.
+
+The endpoint lives beside the page, in the same process, holding the same model: a Gradio app
+is a FastAPI app underneath, so `build_app()` mounts the Blocks inside one of its own. Open
+<http://127.0.0.1:7860/docs> while the demo is running to see it.
+
+## The files
+
+| File | What is in it |
+|---|---|
+| `app.py` | `build_app()`, the argument parsing, and `main()`. Composes the rest. |
+| `content.py` | Everything the page says: prose, example prompts, the player's markup. |
+| `session.py` | `DemoSession` — the engine, the lock that serializes it, and cloned voices. |
+| `streaming.py` | The `/v1/tts/stream` endpoint the player pulls audio from. |
+| `ui.py` | `build_ui()` — the two tabs and their callbacks. |
+| `player.js` | The browser half: SSE in, Web Audio out, plus the finished clip and the wav. |
+
+`app.py` puts its own directory on `sys.path` when it is imported, so the modules beside it are
+imported by plain name. That is what lets `kova-tts demo` load `app.py` straight from its path
+in a checkout where `apps/` is not an importable package.
 
 ## Embedding it
 
-`build_ui()` returns a `gradio.Blocks` without launching it, and `DemoSession` holds all the
-state, so the app can be mounted inside another server or driven in a test:
+`build_app()` returns the whole thing — page plus streaming endpoint — as a FastAPI
+application, and `DemoSession` holds all the state:
 
 ```python
-from apps.demo.app import DemoSession, build_ui
+import uvicorn
+from apps.demo.app import DemoSession, build_app
 
-ui = build_ui(DemoSession(tts=my_engine))     # any object with the KovaTTS surface
+app = build_app(DemoSession(tts=my_engine))   # any object with the KovaTTS surface
+uvicorn.run(app, port=7860)
 ```
+
+`build_ui()` still returns a bare `gradio.Blocks` without launching it, for a caller that wants
+to place the page itself — but the page is only half a demo without something serving
+`STREAM_PATH`, so pass `stream_path=` if you mount it somewhere other than the root.

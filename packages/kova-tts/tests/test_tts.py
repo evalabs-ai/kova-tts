@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 
@@ -12,6 +13,7 @@ import torch
 from kova_codec.constants import SAMPLE_RATE, TOKEN_RATE
 from kova_tts import audio as audio_io
 from kova_tts import prompt as prompt_module
+from kova_tts import tokens as tokens_module
 from kova_tts.engine import tts as tts_module
 from kova_tts.engine.tts import KovaTTS, split_sentences
 from kova_tts.engine.types import CLONE_SAMPLING, TTS_SAMPLING, Voice
@@ -47,16 +49,16 @@ class TestSplitSentences:
         ]
 
     def test_splits_on_sentence_punctuation(self):
-        text = "The first sentence is here. The second sentence follows! And a third one?"
-        assert split_sentences(text) == [
+        text = "The first sentence is here. The second follows along! And a third one comes too?"
+        assert split_sentences(text, max_chars=30) == [
             "The first sentence is here.",
-            "The second sentence follows!",
-            "And a third one?",
+            "The second follows along!",
+            "And a third one comes too?",
         ]
 
     def test_keeps_closing_quotes_with_their_sentence(self):
         text = '"Absolutely not," she said. The room went very quiet indeed.'
-        assert split_sentences(text) == [
+        assert split_sentences(text, max_chars=35) == [
             '"Absolutely not," she said.',
             "The room went very quiet indeed.",
         ]
@@ -65,6 +67,26 @@ class TestSplitSentences:
         segments = split_sentences("Yes. That is exactly what I have been saying all along.")
         assert segments == ["Yes. That is exactly what I have been saying all along."]
 
+    def test_whole_sentences_are_packed_up_to_the_limit(self):
+        """Short sentences ride in one generation rather than each being started cold."""
+        text = "One two three. Four five six. Seven eight nine. Ten eleven twelve."
+        assert split_sentences(text, max_chars=36) == [
+            "One two three. Four five six.",
+            "Seven eight nine. Ten eleven twelve.",
+        ]
+
+    def test_only_a_merged_tail_may_exceed_the_limit(self):
+        text = " ".join(f"Sentence number {i} says something worth hearing." for i in range(40))
+        segments = split_sentences(text)
+        assert len(segments) > 4
+        assert all(len(s) <= tts_module.MAX_SEGMENT_CHARS for s in segments[:-1])
+        assert len(segments[-1]) < tts_module.MAX_SEGMENT_CHARS + tts_module.MIN_SEGMENT_CHARS
+
+    def test_a_trailing_fragment_is_merged_backwards(self):
+        """Only the last chunk can come out under min_chars, and it is never carried."""
+        text = "This first sentence is a perfectly reasonable length on its own. Yes."
+        assert split_sentences(text, max_chars=64) == [text]
+
     def test_a_long_sentence_breaks_at_a_clause(self):
         text = "a" * 120 + ", " + "b" * 120 + ", " + "c" * 120
         segments = split_sentences(text, max_chars=200)
@@ -72,7 +94,7 @@ class TestSplitSentences:
 
     def test_a_long_sentence_with_no_punctuation_breaks_between_words(self):
         text = " ".join(["word"] * 100)
-        segments = split_sentences(text, max_chars=60)
+        segments = split_sentences(text, max_chars=60, min_chars=0)
         assert all(len(s) <= 60 for s in segments)
         assert " ".join(segments) == text
 
@@ -122,6 +144,124 @@ class TestPrompt:
         got = facade._prompt("Next.", None, carry)
         assert prompt_module.parse_audio_tokens(got) == [1, 2, 3]
         assert got.startswith("<|begin_of_text|><|text_prompt_start|>Next.")
+
+
+# ------------------------------------------------------------------------------ carry across
+
+#: Ordinary prose with a realistic spread of sentence lengths, including sentences long enough
+#: that the splitter has to break them. The bug this section guards against only ever showed up
+#: on text like this: with short sentences every segment carried and nothing looked wrong.
+PARAGRAPHS = [
+    "The committee spent the better part of the afternoon working through the revised "
+    "schedule, and by the time the last item was settled it was clear that the original "
+    "deadline had never been realistic. Nobody wanted to say so out loud, partly because the "
+    "schedule had been agreed in public and partly because the alternative meant reopening a "
+    "question everyone had assumed was closed.",
+    "It rained all week. The gutters had been blocked since autumn, so the water came off the "
+    "roof in a single sheet and pooled against the doors until somebody propped them open. "
+    "That helped for about an hour. Nobody complained.",
+    "She had learned to read the river the way other people read a timetable, noticing the "
+    "small changes in colour that meant the current had shifted overnight. On a good morning "
+    "the water ran clear enough to see the gravel, and the boats went out early. On a bad one "
+    "it came down brown and fast from the hills, carrying branches and the occasional fence "
+    "post, and the village found other things to do until it settled. Either way the routine "
+    "was the same: walk to the bend, look for a long minute, and then decide.",
+]
+
+
+class RecordingGenerator:
+    """A generator that renders text at a plausible rate and keeps every prompt it was given.
+
+    Token counts are approximated the way the real tokenizer behaves on these prompts: one
+    token per audio code, and roughly one per four characters of everything else. That only has
+    to be close enough for the KV-cache guard to be exercised at a realistic scale.
+    """
+
+    device = torch.device("cpu")
+
+    def __init__(self, counts: list[int], *, max_cache_len: int = 4096) -> None:
+        self.counts = list(counts)
+        self.max_cache_len = max_cache_len
+        self.encoded: list[str] = []
+        #: The prompt actually generated from, which is the second one whenever a carry was
+        #: built, found not to fit and rebuilt without it.
+        self.used: list[str] = []
+
+    def encode(self, prompt: str) -> list[int]:
+        self.encoded.append(prompt)
+        codes = prompt_module.parse_audio_tokens(prompt)
+        text = tokens_module.AUDIO_TOKEN_RE.sub("", prompt)
+        return [0] * (len(codes) + len(text) // 4)
+
+    def stream_ids(self, ids, params=None, *, greedy: bool = False):
+        self.used.append(self.encoded[-1])
+        return iter(range(1, self.counts.pop(0) + 1))
+
+
+def _plausible_counts(chunks: list[str], rate: float = 4.5) -> list[int]:
+    """Codes each chunk would really generate, at the rate measured on ordinary prose."""
+    return [math.ceil(rate * len(chunk)) for chunk in chunks]
+
+
+def _carried_codes(prompt: str) -> list[int]:
+    return prompt_module.parse_audio_tokens(prompt)
+
+
+class TestCarryAcrossChunks:
+    """Continuity across a join is the carry, and the carry only survives if the chunk fits."""
+
+    def test_the_carry_limit_is_derived_from_the_chunk_size(self):
+        assert tts_module.MAX_CARRY_CODES == tts_module._codes_for_chars(
+            tts_module.MAX_SEGMENT_CHARS
+        )
+
+    @pytest.mark.parametrize("text", PARAGRAPHS)
+    def test_every_chunk_the_splitter_emits_is_small_enough_to_carry(self, text):
+        """The invariant. As two independent constants these drifted apart and the carry died."""
+        for chunk in split_sentences(text)[:-1]:  # the last chunk is never carried
+            assert tts_module._codes_for_chars(len(chunk)) <= tts_module.MAX_CARRY_CODES
+
+    @pytest.mark.parametrize("text", PARAGRAPHS)
+    def test_every_chunk_after_the_first_is_given_the_previous_one(self, text):
+        chunks = split_sentences(text)
+        assert len(chunks) > 2, "this paragraph no longer exercises a join"
+        generator = RecordingGenerator(_plausible_counts(chunks))
+        list(KovaTTS(generator)._stream_codes(text, None, TTS_SAMPLING))
+
+        assert len(generator.used) == len(chunks)
+        for prompt, previous in zip(generator.used[1:], chunks[:-1], strict=True):
+            assert previous in prompt, "the previous chunk's text is missing from the prompt"
+            assert _carried_codes(prompt), "the previous chunk's codes are missing"
+
+    def test_a_chunk_that_ran_long_is_not_carried(self):
+        """A matched pair or nothing: codes with no text make the model stop on step one."""
+        text = PARAGRAPHS[0]
+        chunks = split_sentences(text)
+        counts = _plausible_counts(chunks)
+        counts[0] = tts_module.MAX_CARRY_CODES + 1
+        generator = RecordingGenerator(counts)
+        list(KovaTTS(generator)._stream_codes(text, None, TTS_SAMPLING))
+        assert not _carried_codes(generator.used[1])
+        assert _carried_codes(generator.used[2]), "only the one join should be lost"
+
+    def test_a_carry_that_would_not_fit_the_kv_cache_is_dropped_not_raised(self):
+        """Failure mode of a cramped cache is a lost join, never a crash or a cut-off chunk."""
+        text = PARAGRAPHS[0]
+        chunks = split_sentences(text)
+        generator = RecordingGenerator(_plausible_counts(chunks), max_cache_len=256)
+        list(KovaTTS(generator)._stream_codes(text, None, TTS_SAMPLING))
+        assert not any(_carried_codes(p) for p in generator.used)
+
+    def test_a_cloned_reference_still_leaves_room_for_the_carry(self, clone_voice):
+        """The dangerous combination: a whole reference clip in front of a full-size carry."""
+        text = PARAGRAPHS[0]
+        chunks = split_sentences(text)
+        # Twenty seconds of reference, which is longer than any clip the docs suggest cloning.
+        voice = Voice(name="ref", ref_codes=tuple(range(1600)), ref_text=clone_voice.ref_text)
+        generator = RecordingGenerator(_plausible_counts(chunks))
+        list(KovaTTS(generator)._stream_codes(text, voice, CLONE_SAMPLING))
+        for prompt in generator.used[1:]:
+            assert len(_carried_codes(prompt)) > len(voice.ref_codes)
 
 
 # ---------------------------------------------------------------------------- sampling + trim

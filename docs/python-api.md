@@ -127,7 +127,7 @@ rejected in `__post_init__` rather than silently doing nothing.
 ### `SamplingParams`
 
 ```python
-SamplingParams(temperature=0.9, top_p=0.9, top_k=74, repetition_penalty=1.4,
+SamplingParams(temperature=1.1, top_p=0.9, top_k=75, repetition_penalty=1.1,
                max_tokens=2048, seed=None)
 ```
 

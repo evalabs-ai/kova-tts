@@ -11,7 +11,7 @@ entirely: measured **62 -> 341 codes/second, 5.5x**, on an RTX 5090 with a 4096-
 Prefill stays eager -- it happens once, its shape changes per request, and capturing it would
 buy nothing.
 
-**Memory traffic.** Two fixes, both A/B'd on the same box:
+**Memory traffic.** Two fixes, both measured on the same RTX 5090:
 
 * *The LM head.* ``tie_word_embeddings`` is true, so ``lm_head.weight`` **is** the
   136576x2048 embedding matrix -- 559 MB of the 2.51 GB read per step, 22% of the traffic, to
@@ -50,7 +50,7 @@ from kova_tts.tokens import VocabMap, vocab_map
 
 log = logging.getLogger(__name__)
 
-#: Set to 1 to force the eager decode loop. Exists so the two paths can be compared on one box.
+#: Set to 1 to force the eager decode loop, so the two decode paths can be compared.
 ENV_DISABLE_CUDA_GRAPH = "KOVA_DISABLE_CUDA_GRAPH"
 
 #: Prompt plus generation must fit here. 4096 codes is ~51 seconds of audio, which comfortably

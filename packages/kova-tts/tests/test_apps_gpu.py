@@ -1,14 +1,17 @@
-"""The demo callback and the ComfyUI generate node, on the real model.
+"""The demo's streaming endpoint and the ComfyUI generate node, on the real model.
 
-``test_apps.py`` proves the wiring against a fake engine. This file proves the thing the demo
-exists for: that a real generation reaches the browser as audio, and that the first frame
-arrives well before the last one. Everything else about these two files is cheap to check and
-this is not, so there is one real generation per surface and no more.
+``test_apps.py`` proves the wiring against a fake engine. This file proves the two things the
+demo exists for and only a real generation can show: that audio reaches the browser long before
+the utterance is finished, and that what reaches it is the model's own samples -- not a
+re-encode of them. Everything else about these two files is cheap to check and this is not, so
+there is one real generation per surface, plus the repeat that proves the page is not one-shot.
 """
 
 from __future__ import annotations
 
+import base64
 import importlib.util
+import json
 import sys
 import time
 from pathlib import Path
@@ -89,29 +92,140 @@ def engine(demo: Any) -> Any:
     return loaded
 
 
-def test_the_demo_callback_speaks_before_it_finishes(demo: Any, engine: Any) -> None:
-    session = demo.DemoSession(tts=engine)
+@pytest.fixture(scope="module")
+def demo_url(demo: Any, engine: Any) -> Any:
+    """The demo served by a real uvicorn, on a free port, for the life of this file.
 
+    Not ``TestClient``: it collects a streaming response before handing it over, so every chunk
+    appears to arrive at once and the one measurement this file exists to make -- how long until
+    the first frame -- comes out equal to the whole generation. A socket does not lie about that.
+    """
+    import socket
+    import threading
+
+    import uvicorn
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+
+    session = demo.DemoSession(tts=engine)
+    server = uvicorn.Server(
+        uvicorn.Config(demo.build_app(session), host="127.0.0.1", port=port, log_level="warning")
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.time() + 30
+    while not server.started:
+        assert thread.is_alive() and time.time() < deadline, "the demo server never started"
+        time.sleep(0.05)
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+
+
+def snr_db(reference: np.ndarray, other: np.ndarray) -> float:
+    """Signal-to-noise ratio of `other` against `reference`, in dB.
+
+    The measure that separates the two failure modes: a re-encode in the path shows up here as
+    tens of dB, while run-to-run CUDA noise does not.
+    """
+    error = other[: reference.size] - reference[: other.size]
+    return float(10 * np.log10(np.sum(reference**2) / max(float(np.sum(error**2)), 1e-20)))
+
+
+def stream_once(url: str, **body: Any) -> dict[str, Any]:
+    """One run of the streaming endpoint, timed and reassembled the way the player does it."""
+    import httpx
+
+    chunks: list[bytes] = []
+    done: dict[str, Any] | None = None
     started = time.perf_counter()
     first_audio: float | None = None
-    steps = []
-    for step in session.speak(TEXT, demo.BASE_VOICE, seed=1234):
-        if isinstance(step[0], tuple) and first_audio is None:
-            first_audio = time.perf_counter() - started
-        steps.append(step)
-    total = time.perf_counter() - started
+    with httpx.Client(timeout=300) as client, client.stream("POST", url, json=body) as response:
+        assert response.status_code == 200, response.read()
+        for line in response.iter_lines():
+            if not line.startswith("data:"):
+                continue
+            payload = json.loads(line[5:].strip())
+            if "audio" in payload:
+                if first_audio is None:
+                    first_audio = time.perf_counter() - started
+                chunks.append(base64.b64decode(payload["audio"]))
+            elif "chunks" in payload:
+                done = payload
+            else:  # pragma: no cover - a real failure should fail the test loudly
+                raise AssertionError(f"the stream failed: {payload}")
+    return {
+        "pcm": b"".join(chunks),
+        "chunks": len(chunks),
+        "done": done,
+        "first_audio": first_audio,
+        "elapsed": time.perf_counter() - started,
+    }
 
-    rate, whole = steps[-1][1]
-    seconds = whole.size / rate
-    assert rate == SAMPLE_RATE
+
+def test_the_demo_streams_the_models_own_samples(demo: Any, engine: Any, demo_url: str) -> None:
+    """What the browser plays is what the codec decoded, and it starts arriving immediately.
+
+    Both halves matter. Gradio's streaming audio component re-encodes every frame to AAC, which
+    makes the stream and the finished clip different audio with only one of them clean, so the
+    page does not use it. Re-running the same seed through :meth:`KovaTTS.stream` and comparing
+    waveforms is the check that nothing like it has crept into the path.
+
+    The comparison has a tolerance, and it is worth being precise about why. The seed fixes the
+    sampler, so two runs produce the same tokens and the same number of samples -- but CUDA
+    reductions are not bit-reproducible run to run, so the decoded waveform differs by a few
+    parts in 100,000 (about -85 dBFS, some 60 dB below the quietest thing anyone can hear on
+    this material). A codec in the path does not look like that: an AAC round trip adds 32 ms of
+    padding per frame and lands nearer 17 dB SNR, which any tolerance loose enough to be useful
+    still catches. ``generate()`` is deliberately not the
+    reference either: it decodes the whole code sequence at once rather than window by window.
+    """
+    run = stream_once(demo_url + demo.STREAM_PATH, text=TEXT, seed=1234)
+
+    audio = np.frombuffer(run["pcm"], dtype="<i2")
+    seconds = audio.size / SAMPLE_RATE
     assert seconds > 2.0, "two sentences should be more than two seconds of speech"
-    assert whole.dtype == np.int16 and np.max(np.abs(whole)) > 1000, "that is silence"
+    assert np.max(np.abs(audio)) > 1000, "that is silence"
+    assert run["done"]["samples"] == audio.size
+    assert run["done"]["sample_rate"] == SAMPLE_RATE
 
-    assert first_audio is not None
-    # The claim the demo is built around: audio starts long before generation ends. Generously
-    # bounded -- on this hardware it is nearer a tenth -- because the box may be busy.
-    assert first_audio < total / 2, f"first audio at {first_audio:.2f}s of {total:.2f}s"
-    print(f"\ntime to first audio {first_audio:.2f} s, {seconds:.1f} s of speech in {total:.1f} s")
+    # Sample for sample, what the browser got is what the codec decoded.
+    again = np.concatenate([frame.samples for frame in engine.stream(TEXT, seed=1234)])
+    assert audio.size == again.size, "the same seed must produce the same number of samples"
+    assert snr_db(again, audio.astype(np.float32) / 32767.0) > 60.0
+
+    assert run["first_audio"] is not None
+    # The claim the demo is built around: audio starts long before generation ends. Bounded
+    # generously, at half, because the machine running this may be busy.
+    assert run["first_audio"] < run["elapsed"] / 2
+    print(
+        f"\ntime to first audio {run['first_audio']:.2f} s, "
+        f"{seconds:.1f} s of speech in {run['elapsed']:.1f} s"
+    )
+
+
+def test_three_generations_in_a_row_all_stream(demo: Any, demo_url: str) -> None:
+    """Streaming has to work every time, not only on the first press.
+
+    One server, three requests, the same seed. Anything left behind by a run -- a reservation
+    not released, a generator not closed -- shows up here as a refusal or a short stream.
+    """
+    runs = [
+        stream_once(demo_url + demo.STREAM_PATH, text="Once more, with feeling.", seed=99)
+        for _ in range(3)
+    ]
+
+    assert all(run["chunks"] > 0 and run["done"] is not None for run in runs)
+    waves = [np.frombuffer(run["pcm"], dtype="<i2").astype(np.float32) / 32767.0 for run in runs]
+    assert len({wave.size for wave in waves}) == 1, "same seed, same length, every time"
+    # Same audio too, to within the run-to-run noise of a GPU decode. A run that streamed only
+    # part of its audio, or streamed it twice, is nowhere near this.
+    assert all(snr_db(waves[0], wave) > 60.0 for wave in waves[1:])
+    print("\ntime to first audio per run: " + ", ".join(f"{r['first_audio']:.2f} s" for r in runs))
 
 
 def test_the_comfyui_node_generates_real_audio(comfy: Any, engine: Any) -> None:

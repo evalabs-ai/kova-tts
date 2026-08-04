@@ -25,9 +25,8 @@ Two things carry over from the rest of the project:
 
 - **One clip at a time.** The engine has a single KV cache and refuses to interleave two
   requests, so run one generate node at a time rather than batching a queue of them.
-- **Cloned voices want the cloning preset**, not the plain-synthesis defaults the generate node
-  starts with — `temperature 1.1`, `top_k 20`, `repetition_penalty 1.1`, and `max_tokens` with
-  room for the reference clip, which is generated before your text. See [Voice
+- **Cloned voices need `max_tokens` room** for the reference clip, which is generated before your
+  text. The sampling defaults are otherwise the same for both. See [Voice
   cloning](voice-cloning.md#sampling).
 
 The loader keeps the model in memory across executions, so only the first run of a workflow pays

@@ -60,14 +60,13 @@ class TestVoice:
 
 class TestSamplingParams:
     def test_tts_preset(self):
-        assert (TTS_SAMPLING.temperature, TTS_SAMPLING.top_p) == (0.9, 0.9)
-        assert (TTS_SAMPLING.top_k, TTS_SAMPLING.repetition_penalty) == (74, 1.4)
+        assert (TTS_SAMPLING.temperature, TTS_SAMPLING.top_p) == (1.1, 0.9)
+        assert (TTS_SAMPLING.top_k, TTS_SAMPLING.repetition_penalty) == (75, 1.1)
         assert TTS_SAMPLING.max_tokens == 2048
 
-    def test_clone_preset(self):
-        assert (CLONE_SAMPLING.temperature, CLONE_SAMPLING.top_p) == (1.1, 0.9)
-        assert (CLONE_SAMPLING.top_k, CLONE_SAMPLING.repetition_penalty) == (20, 1.1)
+    def test_clone_preset_differs_only_in_the_token_budget(self):
         assert CLONE_SAMPLING.max_tokens == 3500
+        assert CLONE_SAMPLING.replace(max_tokens=TTS_SAMPLING.max_tokens) == TTS_SAMPLING
 
     def test_defaults_are_the_tts_preset(self):
         assert SamplingParams() == TTS_SAMPLING

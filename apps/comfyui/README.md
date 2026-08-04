@@ -84,8 +84,6 @@ makes the model try to speak words the audio does not contain.
 - Generation is **one clip at a time**. The model has a single KV cache and refuses to
   interleave two requests, so run one generate node at a time rather than batching a queue of
   them in parallel.
-- Sampling defaults are the tuned preset for plain synthesis. Cloned voices want a hotter,
-  much less repetition-penalised setting — `temperature 1.1`, `top_k 20`,
-  `repetition_penalty 1.1` — and the reference clip is generated before your text, so give
-  `max_tokens` room (3500 is the preset).
+- Sampling defaults are the tuned preset. Cloned voices sample the same way, but the reference
+  clip is generated before your text, so give `max_tokens` room (3500 is the preset).
 - Output audio is 32 kHz mono.

@@ -115,7 +115,7 @@ uv run kova-tts generate "A fixed seed makes this reproducible." --seed 7 --out 
 wav = tts.generate("A fixed seed makes this reproducible.", seed=7)
 ```
 
-Without a seed, sampling is random each time — the presets use `temperature=0.9` for plain
+Without a seed, sampling is random each time — the presets use `temperature=1.1` for plain
 synthesis. Greedy decoding is not available: `SamplingParams` requires a positive temperature.
 
 ## Voices

@@ -16,7 +16,7 @@ install. `uv run python apps/demo/app.py` is the same thing.
 
 **Its own README is the reference**, and it is kept current with the app:
 [`apps/demo/README.md`](https://github.com/evalabs-ai/kova-tts/blob/main/apps/demo/README.md) —
-every flag, what is on each tab, and how to mount `build_ui()` inside another server.
+every flag, what is on each tab, and how to mount `build_app()` inside another server.
 
 Three things to expect before you open it:
 

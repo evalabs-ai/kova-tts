@@ -84,14 +84,14 @@ it, whether you pass a path or an already-loaded waveform.
 
 ## Sampling
 
-Cloning uses a different preset from plain synthesis, and picking the wrong one is audible:
+Both presets sample identically; only the token budget differs:
 
 | | Plain synthesis | Cloning |
 |---|---|---|
-| `temperature` | 0.9 | 1.1 |
+| `temperature` | 1.1 | 1.1 |
 | `top_p` | 0.9 | 0.9 |
-| `top_k` | 74 | 20 |
-| `repetition_penalty` | 1.4 | 1.1 |
+| `top_k` | 75 | 75 |
+| `repetition_penalty` | 1.1 | 1.1 |
 | `max_tokens` | 2048 | 3500 |
 
 `generate` picks the right one from the voice you pass, so normally you do nothing. The

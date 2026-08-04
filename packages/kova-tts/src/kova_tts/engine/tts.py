@@ -13,12 +13,15 @@ Audio is float32 mono numpy at 32 kHz, everywhere. :meth:`stream` yields
 
 Three behaviours worth knowing about before reading the code:
 
-**Long text is generated sentence by sentence**, with the previous segment threaded into the
-next prompt as continuation context: its text in front of the new text, its codes in front of
-the continuation. Without it each sentence restarts the model's prosody from nothing and the
-joins are audible. Text and codes have to travel together -- codes alone and the model reads
-several seconds of speech for a sentence it has not begun, and stops immediately. The carried
-codes are prompt-only, never decoded twice, so the audio runs straight through the boundary.
+**Long text is generated chunk by chunk**, with the previous chunk threaded into the next
+prompt as continuation context: its text in front of the new text, its codes in front of the
+continuation. Without it each chunk restarts the model's prosody -- and, on the base model with
+no voice, its choice of speaker -- from nothing, and the joins are audible. Text and codes have
+to travel together -- codes alone and the model reads several seconds of speech for a sentence
+it has not begun, and stops immediately. The carried codes are prompt-only, never decoded
+twice, so the audio runs straight through the boundary. :data:`MAX_SEGMENT_CHARS` and
+:data:`MAX_CARRY_CODES` are one number expressed twice rather than two independent ones: a
+chunk is sized so that the codes it generates always fit the carry.
 
 **A cloned voice re-renders its reference clip first.** The reference codes lead the
 continuation, so the audio for them is produced before a single word of the target text. The
@@ -33,6 +36,7 @@ plain synthesis :data:`~kova_tts.engine.types.TTS_SAMPLING`; pass ``params=`` to
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 from collections.abc import Callable, Iterator
@@ -60,22 +64,43 @@ from kova_tts.tokens import BEGIN_OF_TEXT
 
 log = logging.getLogger(__name__)
 
-#: Longest previous segment carried into the next prompt, in codes -- about eight seconds.
-#: The carry is a matched pair (the segment's text *and* all of its codes), so it cannot be
-#: truncated to a tail without the two drifting apart; a segment longer than this is simply not
-#: carried, and the next one starts fresh.
-MAX_CARRY_CODES = 640
+#: Codes the model emits per character of text. Ordinary prose at the chunk size below measures
+#: 4.1 to 5.0, and short fragments run higher because the leading and trailing silence is a
+#: fixed cost paid by however few characters there are. This is deliberately a bound with margin
+#: rather than the average: underestimating it costs a carry, silently.
+CODES_PER_CHAR = 6.0
 
-#: Longest segment handed to the model in one generation. Roughly the point past which a
-#: sentence stops fitting comfortably inside the generation budget.
-MAX_SEGMENT_CHARS = 300
+#: Longest chunk handed to the model in one generation. Whole sentences are packed up to this,
+#: so a chunk is a sentence or two of ordinary prose; only a sentence longer than this on its
+#: own is ever broken internally, and every internal break is an audible join.
+MAX_SEGMENT_CHARS = 160
 
-#: Segments shorter than this are glued onto the next one: "Dr." or "Yes." on its own gives the
-#: model too little to work with and the result is clipped.
+#: Longest previous chunk carried into the next prompt, in codes -- twelve seconds of audio.
+#: **Derived from** :data:`MAX_SEGMENT_CHARS` rather than chosen: the carry is a matched pair
+#: (the chunk's text *and* all of its codes), so it cannot be truncated to a tail without the
+#: two drifting apart, and the only way to keep it alive is to size the chunk so that it fits.
+#: As an independent number this was 640 -- about 140 characters, against a splitter emitting
+#: 300 -- so every chunk of realistic prose was dropped from the carry and every chunk after the
+#: first was generated cold. Keep the two tied together.
+MAX_CARRY_CODES = math.ceil(MAX_SEGMENT_CHARS * CODES_PER_CHAR)
+
+#: A trailing chunk shorter than this is merged into the one before it: "Dr." or "Yes." on its
+#: own gives the model too little to work with and the result is clipped. Packing fills every
+#: other chunk, so only the last one can come out this short -- and the last chunk is never
+#: carried anywhere, which is why that merge is allowed to overshoot :data:`MAX_SEGMENT_CHARS`.
 MIN_SEGMENT_CHARS = 24
 
 _SENTENCE_END = re.compile(r"(?<=[.!?…])[\"')\]]*\s+")
 _CLAUSE_END = re.compile(r"(?<=[,;:])\s+")
+
+
+def _codes_for_chars(chars: int) -> int:
+    """Codes to budget for `chars` characters of text.
+
+    The one place :data:`CODES_PER_CHAR` is applied, so the room reserved for a chunk's
+    generation and the size of the carry it can become are the same estimate.
+    """
+    return math.ceil(chars * CODES_PER_CHAR)
 
 
 @dataclass(frozen=True, slots=True)
@@ -365,6 +390,40 @@ class KovaTTS:
         prompt = f"{BEGIN_OF_TEXT}{tts_prompt(text)}"
         return prompt + format_audio_tokens(codes) if codes else prompt
 
+    def _prompt_ids(
+        self,
+        segment: str,
+        voice: Voice | None,
+        carry: _Carry | None,
+        params: SamplingParams,
+    ) -> list[int]:
+        """Tokens for one chunk's prompt, dropping the carry if it would not fit the KV cache.
+
+        Prompt and generation share one static cache of ``max_cache_len``. The worst prompt is a
+        cloned voice -- whose whole reference clip leads the continuation -- plus a full-size
+        carry plus both texts, with a chunk's worth of generation still to come on top. The
+        sizing of :data:`MAX_SEGMENT_CHARS` keeps that well inside the default 4096, but a
+        caller can clone a long clip or build the generator with a smaller cache, and then it
+        does not fit. Dropping the carry costs continuity at one join; not dropping it costs
+        either a raised ``ValueError`` or a chunk silently truncated mid-word, so the carry is
+        what gives way.
+        """
+        ids = self.generator.encode(self._prompt(segment, voice, carry))
+        if carry is None:
+            return ids
+        reserve = min(params.max_tokens, _codes_for_chars(len(segment)))
+        if len(ids) + reserve <= self.generator.max_cache_len:
+            return ids
+        log.debug(
+            "Dropping the carry for a %d-character chunk: %d prompt tokens plus %d of "
+            "generation do not fit a %d-token KV cache.",
+            len(segment),
+            len(ids),
+            reserve,
+            self.generator.max_cache_len,
+        )
+        return self.generator.encode(self._prompt(segment, voice, None))
+
     def _generate_codes(self, text: str, voice: Voice | None, params: SamplingParams) -> list[int]:
         codes: list[int] = []
         for chunk in self._stream_codes(text, voice, params):
@@ -377,18 +436,20 @@ class KovaTTS:
         voice: Voice | None,
         params: SamplingParams,
     ) -> Iterator[list[int]]:
-        """Codes for the whole text, segment by segment, one code per yield.
+        """Codes for the whole text, chunk by chunk, one code per yield.
 
-        The previous segment rides along in the next prompt as text plus its codes. It is never
-        decoded twice: only the codes yielded here reach the codec.
+        The carry slides: each chunk hands its text and its codes to the next one and no
+        further, so the prompt stays a fixed size however long the text is. Carried codes are
+        never decoded twice -- only the codes yielded here reach the codec.
         """
         segments = split_sentences(text)
         if not segments:
             return
         carry: _Carry | None = None
         for segment in segments:
+            ids = self._prompt_ids(segment, voice, carry, params)
             produced: list[int] = []
-            for code in self.generator.stream(self._prompt(segment, voice, carry), params):
+            for code in self.generator.stream_ids(ids, params):
                 produced.append(code)
                 yield [code]
             carry = _Carry(segment, tuple(produced)) if len(produced) <= MAX_CARRY_CODES else None
@@ -403,11 +464,17 @@ def split_sentences(
     max_chars: int = MAX_SEGMENT_CHARS,
     min_chars: int = MIN_SEGMENT_CHARS,
 ) -> list[str]:
-    """Split `text` into segments the model can render in one generation.
+    """Split `text` into chunks the model can render in one generation.
 
-    Sentence boundaries first; anything still longer than `max_chars` is broken at a clause
-    boundary, and only then at whitespace, because a break mid-phrase is audible. Fragments
-    shorter than `min_chars` are glued onto the next segment.
+    Sentence boundaries first; a sentence still longer than `max_chars` is broken at a clause
+    boundary, and only then at whitespace, because a break mid-phrase is audible. Whole
+    sentences are then packed together up to `max_chars`, which is what keeps several short
+    ones in a single generation instead of starting each of them cold.
+
+    The last chunk is merged backwards if it comes out shorter than `min_chars`, since a chunk
+    of "Yes." on its own gives the model too little to work with and the result is clipped.
+    That merge is the only case where a chunk exceeds `max_chars`, and it is safe because the
+    last chunk is never carried into anything.
 
     Returns an empty list for empty text.
     """
@@ -421,13 +488,16 @@ def split_sentences(
         if sentence:
             pieces.extend(_split_long(sentence, max_chars))
 
-    merged: list[str] = []
+    chunks: list[str] = []
     for piece in pieces:
-        if merged and len(merged[-1]) < min_chars:
-            merged[-1] = f"{merged[-1]} {piece}"
+        if chunks and len(chunks[-1]) + 1 + len(piece) <= max_chars:
+            chunks[-1] = f"{chunks[-1]} {piece}"
         else:
-            merged.append(piece)
-    return merged
+            chunks.append(piece)
+    if len(chunks) > 1 and len(chunks[-1]) < min_chars:
+        tail = chunks.pop()
+        chunks[-1] = f"{chunks[-1]} {tail}"
+    return chunks
 
 
 def _split_long(sentence: str, max_chars: int) -> list[str]:

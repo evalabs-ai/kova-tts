@@ -1,0 +1,500 @@
+/**
+ * The demo's audio player: 16-bit PCM in, gap-free sound out.
+ *
+ * Why this exists. Gradio's streaming audio component does not send the samples it is given:
+ * it re-encodes every yielded frame to AAC with ffmpeg and serves the result as HLS segments.
+ * That is a lossy codec applied to ~390 ms of speech at a time, and each segment carries its
+ * own encoder priming, so the joins click. The bytes the model produces are already exactly
+ * what an AudioBuffer wants, so this file takes them straight from the server's documented SSE
+ * stream and schedules them itself. Nothing is re-encoded anywhere, and consecutive frames abut
+ * to the sample.
+ *
+ * The scheme is the one the production playground uses: decode base64 -> Int16 -> Float32, hand
+ * each frame to an AudioBufferSourceNode started at a running cursor, and let the audio clock
+ * -- not a timer, and not the network -- decide when each frame is heard.
+ *
+ * app.py loads this file and runs it once per page load, which installs `window.kovaDemo`. The
+ * Speak and Stop buttons are ordinary Gradio buttons whose click handlers are pure JavaScript.
+ */
+
+(function () {
+    "use strict";
+
+    /** Endpoint the page streams from. app.py sets this; the default is where it mounts it. */
+    const STREAM_PATH = window.KOVA_STREAM_PATH || "/v1/tts/stream";
+
+    /** The codec's own rate. Every chunk states its rate; this is only the opening assumption. */
+    const CODEC_SAMPLE_RATE = 32000;
+
+    /**
+     * Slack between "now" and the first frame's start time. Web Audio will silently drop a
+     * source scheduled in the past, and the first frame is scheduled while the main thread is
+     * still busy decoding it, so it needs a little of the audio clock to be still ahead of it.
+     * 80 ms is inaudible as latency and is comfortably more than one render quantum.
+     */
+    const START_DELAY_SEC = 0.08;
+
+    /** Longest text the demo accepts, mirrored from app.py only to fail fast in the browser. */
+    const MAX_CHARS = window.KOVA_MAX_CHARS || 1200;
+
+    // ------------------------------------------------------------------ decoding and packaging
+
+    /** base64 -> Int16Array. The payload is little-endian, which is what a DataView-free view
+     *  of the bytes already gives us on every platform a browser runs on. */
+    function base64ToInt16(base64) {
+        if (!base64) return new Int16Array(0);
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        // slice(0) so the Int16Array owns an aligned buffer of its own.
+        return new Int16Array(bytes.buffer.slice(0));
+    }
+
+    function int16ToFloat32(int16) {
+        const float32 = new Float32Array(int16.length);
+        for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768;
+        return float32;
+    }
+
+    /**
+     * Linear resampling, used only when the browser refused to open a context at the codec's
+     * rate. Per-frame interpolation error at a frame boundary is far below the noise floor;
+     * a whole extra buffering layer to avoid it would not be.
+     */
+    function resampleLinear(input, fromRate, toRate) {
+        if (fromRate === toRate || input.length === 0) return input;
+        const ratio = fromRate / toRate;
+        const output = new Float32Array(Math.max(1, Math.round(input.length / ratio)));
+        for (let i = 0; i < output.length; i++) {
+            const position = i * ratio;
+            const left = Math.floor(position);
+            const right = Math.min(left + 1, input.length - 1);
+            const fraction = position - left;
+            output[i] = input[left] + (input[right] - input[left]) * fraction;
+        }
+        return output;
+    }
+
+    /** A 44-byte canonical WAV header for `samples` mono 16-bit frames. */
+    function wavHeader(samples, sampleRate) {
+        const buffer = new ArrayBuffer(44);
+        const view = new DataView(buffer);
+        const dataSize = samples * 2;
+        const ascii = (offset, text) => {
+            for (let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i));
+        };
+        ascii(0, "RIFF");
+        view.setUint32(4, 36 + dataSize, true);
+        ascii(8, "WAVE");
+        ascii(12, "fmt ");
+        view.setUint32(16, 16, true); // PCM header length
+        view.setUint16(20, 1, true); // format: uncompressed PCM
+        view.setUint16(22, 1, true); // channels
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, sampleRate * 2, true); // byte rate
+        view.setUint16(32, 2, true); // block align
+        view.setUint16(34, 16, true); // bits per sample
+        ascii(36, "data");
+        view.setUint32(40, dataSize, true);
+        return buffer;
+    }
+
+    /** The frames already received, as one playable, downloadable wav. No re-encoding. */
+    function wavBlob(chunks, sampleRate) {
+        const samples = chunks.reduce((total, chunk) => total + chunk.length, 0);
+        const pcm = new Uint8Array(samples * 2);
+        let offset = 0;
+        for (const chunk of chunks) {
+            pcm.set(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength), offset);
+            offset += chunk.byteLength;
+        }
+        return new Blob([wavHeader(samples, sampleRate), pcm], { type: "audio/wav" });
+    }
+
+    // ---------------------------------------------------------------------------- the player
+
+    /**
+     * Streaming PCM playback over Web Audio.
+     *
+     * One AudioContext for the life of the page -- contexts are a limited resource and opening
+     * one per generation is how a page ends up unable to make sound on the fifth press.
+     * `clearPlayback` is what makes a second generation behave exactly like the first: it stops
+     * every source still scheduled and puts the cursor back on the clock as it is *now*.
+     */
+    class StreamingPlayer {
+        constructor() {
+            this.context = null;
+            this.sources = [];
+            this.chunks = [];
+            this.nextStartTime = 0;
+            this.startedAt = null;
+            this.sampleRate = CODEC_SAMPLE_RATE;
+        }
+
+        /** Open the context, asking for the codec's rate so nothing has to be resampled. */
+        init() {
+            if (this.context) return this.context;
+            const Context = window.AudioContext || window.webkitAudioContext;
+            try {
+                this.context = new Context({
+                    sampleRate: CODEC_SAMPLE_RATE,
+                    latencyHint: "interactive",
+                });
+            } catch (error) {
+                // Some browsers refuse a rate the output device cannot do natively. Fine: the
+                // frames get resampled on the way in instead.
+                this.context = new Context();
+            }
+            this.nextStartTime = this.context.currentTime;
+            return this.context;
+        }
+
+        /**
+         * Bring the context out of "suspended", which is where every browser starts it until a
+         * user gesture says otherwise. Called from the click that starts a generation, and once
+         * from the first pointer event anywhere on the page, so the hardware is already awake
+         * by the time the first frame lands.
+         */
+        unlock() {
+            const context = this.init();
+            if (context.state === "running") return;
+            try {
+                // A moment of silence keeps the output device from going back to sleep during
+                // the wait for the first frame, which on some platforms eats the start of it.
+                const warm = context.createBufferSource();
+                warm.buffer = context.createBuffer(1, Math.ceil(context.sampleRate / 2), context.sampleRate);
+                warm.connect(context.destination);
+                warm.start();
+            } catch (error) {
+                /* not fatal: resume() below is what actually matters */
+            }
+            const resumed = context.resume();
+            if (resumed && resumed.catch) resumed.catch(() => undefined);
+        }
+
+        /** Schedule one decoded frame at the cursor, and move the cursor past it. */
+        enqueue(base64, sampleRate) {
+            const context = this.init();
+            const int16 = base64ToInt16(base64);
+            if (int16.length === 0) return;
+            this.sampleRate = sampleRate || this.sampleRate;
+            this.chunks.push(int16);
+
+            const samples = resampleLinear(
+                int16ToFloat32(int16),
+                this.sampleRate,
+                context.sampleRate,
+            );
+            const buffer = context.createBuffer(1, samples.length, context.sampleRate);
+            buffer.getChannelData(0).set(samples);
+
+            const source = context.createBufferSource();
+            source.buffer = buffer;
+            source.connect(context.destination);
+
+            // max(): the first frame starts a little ahead of the clock, and every frame after
+            // it starts exactly where the previous one ended -- unless generation fell behind
+            // playback, in which case there is nothing to be done but start again from now.
+            const startAt = Math.max(this.nextStartTime, context.currentTime + START_DELAY_SEC);
+            source.start(startAt);
+            if (this.startedAt === null) this.startedAt = startAt;
+            this.nextStartTime = startAt + buffer.duration;
+            this.sources.push(source);
+            source.onended = () => {
+                this.sources = this.sources.filter((queued) => queued !== source);
+            };
+        }
+
+        /** Stop everything still scheduled, keeping the audio received so far. */
+        stopPlayback() {
+            for (const source of this.sources) {
+                try {
+                    source.stop();
+                } catch (error) {
+                    /* already finished */
+                }
+            }
+            this.sources = [];
+        }
+
+        /** Stop, forget, and put the cursor back on the clock: the state a new run starts in. */
+        clearPlayback() {
+            this.stopPlayback();
+            this.chunks = [];
+            this.startedAt = null;
+            this.nextStartTime = this.context ? this.context.currentTime : 0;
+        }
+
+        /** Seconds of audio received so far. */
+        duration() {
+            const samples = this.chunks.reduce((total, chunk) => total + chunk.length, 0);
+            return samples / this.sampleRate;
+        }
+
+        /** How far playback has got, in seconds, capped at what has actually been received. */
+        position() {
+            if (!this.context || this.startedAt === null) return 0;
+            const elapsed = this.context.currentTime - this.startedAt;
+            return Math.min(this.duration(), Math.max(0, elapsed));
+        }
+
+        blob() {
+            return wavBlob(this.chunks, this.sampleRate);
+        }
+    }
+
+    // ------------------------------------------------------------------------------ the page
+
+    const player = new StreamingPlayer();
+
+    /** The run in flight: its abort handle, and enough state for the status line. */
+    let active = null;
+
+    /** True once a generation has completed, so the first press can say the model is loading. */
+    let modelLoaded = Boolean(window.KOVA_MODEL_LOADED);
+
+    /** The object URL of the finished clip, revoked when the next one replaces it. */
+    let clipUrl = null;
+
+    const element = (id) => document.getElementById(id);
+
+    function setStatus(message) {
+        const status = element("kova-status");
+        if (status) status.textContent = message;
+    }
+
+    function clock(seconds) {
+        const whole = Math.max(0, Math.floor(seconds));
+        return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+    }
+
+    /** Paint the transport: a filled bar for playback position within what has been received. */
+    function paint() {
+        const total = player.duration();
+        const position = player.position();
+        const fill = element("kova-fill");
+        const elapsed = element("kova-elapsed");
+        if (fill) fill.style.width = total > 0 ? `${(100 * position) / total}%` : "0%";
+        if (elapsed) elapsed.textContent = `${clock(position)} / ${clock(total)}`;
+        // Keep painting until the last scheduled frame has been heard, not until the last one
+        // has been received: generation finishes well before playback does.
+        if (active || player.sources.length > 0) window.requestAnimationFrame(paint);
+    }
+
+    /** Hand the finished audio to a plain <audio> element, for scrubbing and downloading. */
+    function publishClip() {
+        const clip = element("kova-clip");
+        const download = element("kova-download");
+        if (!clip || player.chunks.length === 0) return;
+        if (clipUrl) URL.revokeObjectURL(clipUrl);
+        clipUrl = URL.createObjectURL(player.blob());
+        clip.src = clipUrl;
+        if (download) {
+            download.href = clipUrl;
+            download.hidden = false;
+        }
+        const wrapper = element("kova-clip-row");
+        if (wrapper) wrapper.hidden = false;
+    }
+
+    /** Parse `data: {json}\n\n` events off a fetch body. Named events are ignored: the payload
+     *  says what it is, and a `done` or an `error` is unmistakable. */
+    async function* readEvents(body) {
+        const reader = body.getReader();
+        const decoder = new TextDecoder();
+        let buffered = "";
+        try {
+            for (;;) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffered += decoder.decode(value, { stream: true });
+                let boundary;
+                while ((boundary = buffered.indexOf("\n\n")) !== -1) {
+                    const block = buffered.slice(0, boundary);
+                    buffered = buffered.slice(boundary + 2);
+                    const data = block
+                        .split("\n")
+                        .filter((line) => line.startsWith("data:"))
+                        .map((line) => line.slice(5).trim())
+                        .join("\n");
+                    if (!data) continue;
+                    try {
+                        yield JSON.parse(data);
+                    } catch (error) {
+                        /* a half-written event is not worth stopping for */
+                    }
+                }
+            }
+        } finally {
+            reader.releaseLock();
+        }
+    }
+
+    /** Read the error envelope the server sends, falling back to the status code. */
+    async function describeFailure(response) {
+        try {
+            const body = await response.json();
+            if (body && body.message) return body.message;
+        } catch (error) {
+            /* not JSON */
+        }
+        return `The server answered ${response.status}.`;
+    }
+
+    /**
+     * Generate `options.text` and play it as it arrives.
+     *
+     * Every run starts by clearing the player, which is the whole of the fix for a second
+     * generation not streaming: no source from the previous run is left scheduled, and the
+     * cursor starts from the clock rather than from wherever the last run left it.
+     */
+    async function speak(options) {
+        const text = (options.text || "").trim();
+        if (!text) {
+            setStatus("Type something for the model to say, then press Speak.");
+            return;
+        }
+        if (text.length > MAX_CHARS) {
+            setStatus(
+                `That is ${text.length.toLocaleString()} characters; this demo generates up to ` +
+                    `${MAX_CHARS.toLocaleString()} at a time. Trim it, or use the Python API.`,
+            );
+            return;
+        }
+
+        // A press while a run is in flight replaces it, rather than colliding with it: the
+        // abort closes the server's generator, which releases the engine for this request.
+        stop({ quiet: true });
+
+        const controller = new AbortController();
+        const seed = Number.isFinite(options.seed) && options.seed >= 0
+            ? Math.floor(options.seed)
+            : Math.floor(Math.random() * 2147483646);
+        active = { controller, seed, chunks: 0, firstAudio: null };
+
+        player.unlock();
+        player.clearPlayback();
+
+        const clipRow = element("kova-clip-row");
+        if (clipRow) clipRow.hidden = true;
+        setStatus(modelLoaded ? "Generating..." : "Loading the model, which takes a few seconds...");
+        window.requestAnimationFrame(paint);
+
+        const started = performance.now();
+        try {
+            const response = await fetch(STREAM_PATH, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                    text: text,
+                    voice: options.voice || null,
+                    seed: seed,
+                    sampling: {
+                        temperature: options.temperature,
+                        top_p: options.top_p,
+                        top_k: options.top_k,
+                        repetition_penalty: options.repetition_penalty,
+                        max_tokens: options.max_tokens,
+                    },
+                }),
+                signal: controller.signal,
+            });
+
+            if (!response.ok) {
+                setStatus(await describeFailure(response));
+                active = null;
+                return;
+            }
+
+            for await (const event of readEvents(response.body)) {
+                if (controller.signal.aborted) return;
+                if (typeof event.audio === "string") {
+                    if (active.firstAudio === null) {
+                        active.firstAudio = (performance.now() - started) / 1000;
+                        modelLoaded = true;
+                    }
+                    player.enqueue(event.audio, event.sample_rate);
+                    active.chunks += 1;
+                    setStatus(
+                        `First audio in ${active.firstAudio.toFixed(2)} s · ` +
+                            `${player.duration().toFixed(1)} s generated...`,
+                    );
+                } else if (typeof event.message === "string") {
+                    setStatus(`That failed: ${event.message}`);
+                    active = null;
+                    return;
+                } else if (typeof event.chunks === "number") {
+                    finish(event, started);
+                    return;
+                }
+            }
+            // The body ended without a terminal event: the connection dropped mid-generation.
+            if (active) {
+                setStatus("The connection closed before the model had finished.");
+                publishClip();
+                active = null;
+            }
+        } catch (error) {
+            if (controller.signal.aborted) return;
+            setStatus(`Generation failed: ${error && error.message ? error.message : error}`);
+            active = null;
+        }
+    }
+
+    /** The `done` event: report the run, and hand the audio to the plain player. */
+    function finish(event, started) {
+        const run = active;
+        active = null;
+        if (!run) return;
+        const elapsed = (performance.now() - started) / 1000;
+        const spoken = event.duration_seconds || player.duration();
+        publishClip();
+        if (run.chunks === 0) {
+            setStatus(
+                "The model produced no audio for that text. Try rephrasing it, or add some " +
+                    "punctuation so it has a sentence to work with.",
+            );
+            return;
+        }
+        const speed = elapsed > 0 ? spoken / elapsed : 0;
+        setStatus(
+            `First audio in ${(run.firstAudio || 0).toFixed(2)} s · ${spoken.toFixed(1)} s of ` +
+                `speech in ${elapsed.toFixed(1)} s (${speed.toFixed(1)}× real time) · seed ${run.seed}`,
+        );
+    }
+
+    /**
+     * Stop playing and stop generating. The engine is released by the server as soon as the
+     * request is abandoned, so the next press works immediately.
+     */
+    function stop(options) {
+        const quiet = Boolean(options && options.quiet);
+        const interrupted = Boolean(active);
+        if (active) {
+            active.controller.abort();
+            active = null;
+        }
+        player.stopPlayback();
+        if (quiet) return;
+        // Half a generation is still worth keeping; a finished one has already been published,
+        // and re-publishing it would yank the clip out from under a listener who is scrubbing.
+        if (interrupted) publishClip();
+        setStatus("Stopped.");
+    }
+
+    // The finished clip and the streaming player must never sound at once: pressing play on the
+    // <audio> element takes over from whatever is still scheduled.
+    document.addEventListener(
+        "play",
+        (event) => {
+            if (event.target && event.target.id === "kova-clip") stop({ quiet: true });
+        },
+        true,
+    );
+
+    // Browsers keep an AudioContext suspended until a gesture. Speak is a gesture, but priming
+    // on the first pointer event means the hardware is awake before the first frame arrives.
+    document.addEventListener("pointerdown", () => player.unlock(), { once: true, capture: true });
+
+    window.kovaDemo = { speak, stop, player };
+})();

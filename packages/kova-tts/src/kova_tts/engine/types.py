@@ -78,15 +78,15 @@ class Voice:
 class SamplingParams:
     """LM sampling knobs.
 
-    The defaults are the plain-TTS preset; use :data:`TTS_SAMPLING` / :data:`CLONE_SAMPLING`
-    (or the classmethods) rather than inventing values -- these two points were tuned for the
-    shipped checkpoint during development and it is sensitive to them, cloning especially.
+    The defaults are :data:`TTS_SAMPLING`. Prefer that preset or :data:`CLONE_SAMPLING` (or the
+    classmethods) over inventing values -- they were tuned for the shipped checkpoint, and it is
+    sensitive to them.
     """
 
-    temperature: float = 0.9
+    temperature: float = 1.1
     top_p: float = 0.9
-    top_k: int = 74
-    repetition_penalty: float = 1.4
+    top_k: int = 75
+    repetition_penalty: float = 1.1
     max_tokens: int = 2048
     seed: int | None = None
 
@@ -123,23 +123,18 @@ class SamplingParams:
         return CLONE_SAMPLING.replace(**overrides)
 
 
-#: Validated preset for plain synthesis.
+#: Preset for plain synthesis.
 TTS_SAMPLING = SamplingParams(
-    temperature=0.9,
+    temperature=1.1,
     top_p=0.9,
-    top_k=74,
-    repetition_penalty=1.4,
+    top_k=75,
+    repetition_penalty=1.1,
     max_tokens=2048,
 )
 
-#: Validated preset for voice cloning / zero-shot.
-CLONE_SAMPLING = SamplingParams(
-    temperature=1.1,
-    top_p=0.9,
-    top_k=20,
-    repetition_penalty=1.1,
-    max_tokens=3500,
-)
+#: Preset for voice cloning / zero-shot. The sampling knobs match :data:`TTS_SAMPLING`; only the
+#: token budget differs, because a clone prompt spends part of it re-rendering the reference.
+CLONE_SAMPLING = TTS_SAMPLING.replace(max_tokens=3500)
 
 
 @dataclass(frozen=True, slots=True)

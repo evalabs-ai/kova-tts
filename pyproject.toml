@@ -36,6 +36,9 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["kova_codec", "kova_tts"]
+# `apps/demo/app.py` puts its own directory on the path and imports its siblings by plain name,
+# so they are local modules rather than third-party ones.
+known-local-folder = ["content", "session", "streaming", "ui"]
 
 [tool.pytest.ini_options]
 testpaths = ["packages/kova-codec/tests", "packages/kova-tts/tests"]

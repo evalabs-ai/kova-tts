@@ -7,13 +7,20 @@ the demo through its file, and ComfyUI imports the node directory as a package.
 
 Everything runs against :class:`FakeTTS`, which has the surface of
 :class:`~kova_tts.engine.tts.KovaTTS` and a sine wave where the model would be. That is enough
-to check what actually breaks in these two files: the streaming callback yielding progressively,
-the states a first-time user lands in, and the ComfyUI type conversion at the boundary.
+to check what actually breaks in these two files: the demo's streaming endpoint handing the
+browser the model's own samples and nothing else, the states a first-time user lands in, and
+the ComfyUI type conversion at the boundary.
+
+The demo is exercised through :func:`build_app`, over HTTP, because that is how the page uses
+it: the browser POSTs to the streaming endpoint and plays the PCM itself. A test that called a
+Python callback instead would prove nothing about the thing that was broken.
 """
 
 from __future__ import annotations
 
+import base64
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -23,6 +30,7 @@ import pytest
 
 from kova_codec.constants import SAMPLE_RATE
 from kova_tts import AudioFrame, MissingArtifact, Voice
+from kova_tts.audio import to_pcm_bytes
 
 APPS = Path(__file__).resolve().parents[3] / "apps"
 
@@ -43,6 +51,7 @@ def _load(name: str, path: Path, *, package: bool = False) -> Any:
 def demo() -> Any:
     """``apps/demo/app.py``, skipped when the ``demo`` extra is not installed."""
     pytest.importorskip("gradio")
+    pytest.importorskip("httpx")
     return _load("kova_demo_app", APPS / "demo" / "app.py")
 
 
@@ -129,6 +138,65 @@ def reference_wav(tmp_path: Path) -> Path:
     return save_wav(tmp_path / "reference.wav", sine(3.0), SAMPLE_RATE)
 
 
+# ------------------------------------------------------------------------ driving the endpoint
+
+
+class Stream:
+    """One run of the streaming endpoint, taken apart the way the player takes it apart."""
+
+    def __init__(self, status: int, payloads: list[dict[str, Any]]) -> None:
+        self.status = status
+        self.payloads = payloads
+
+    @property
+    def chunks(self) -> list[bytes]:
+        """The decoded PCM of each ``chunk`` event, in the order they arrived."""
+        return [base64.b64decode(item["audio"]) for item in self.payloads if "audio" in item]
+
+    @property
+    def pcm(self) -> bytes:
+        """Every chunk concatenated: exactly what the player has when the stream ends."""
+        return b"".join(self.chunks)
+
+    @property
+    def done(self) -> dict[str, Any] | None:
+        return next((item for item in self.payloads if "chunks" in item), None)
+
+    @property
+    def error(self) -> dict[str, Any] | None:
+        return next((item for item in self.payloads if "error" in item), None)
+
+
+def speak(client: Any, path: str, **body: Any) -> Stream:
+    """POST one synthesis request and collect the events it streams back."""
+    payloads: list[dict[str, Any]] = []
+    with client.stream("POST", path, json=body) as response:
+        if response.status_code != 200:
+            response.read()
+            return Stream(response.status_code, [response.json()])
+        for line in response.iter_lines():
+            if line.startswith("data:"):
+                payloads.append(json.loads(line[5:].strip()))
+    return Stream(response.status_code, payloads)
+
+
+@pytest.fixture
+def client(demo: Any):
+    """A client for the whole demo -- page and stream -- against a fake engine.
+
+    Yields ``(client, session, fake)``. Function-scoped: the session owns the lock the endpoint
+    reserves, and a test that leaves it held must not reach the next one.
+    """
+    from fastapi.testclient import TestClient
+
+    def build(fake: Any = None, **options: Any) -> tuple[Any, Any, Any]:
+        fake = fake if fake is not None else FakeTTS()
+        session = demo.DemoSession(tts=fake, **options)
+        return TestClient(demo.build_app(session)), session, fake
+
+    return build
+
+
 # --------------------------------------------------------------------------------- the demo: UI
 
 
@@ -141,11 +209,35 @@ def test_build_ui_constructs_without_launching(demo: Any) -> None:
     assert isinstance(ui, gr.Blocks)
     dropdowns = [block for block in ui.blocks.values() if isinstance(block, gr.Dropdown)]
     assert [choice[1] for choice in dropdowns[0].choices] == [demo.BASE_VOICE, "alto", "tenor"]
-    # The whole point of the page: an audio output that plays while it is still being written.
-    assert any(isinstance(block, gr.Audio) and block.streaming for block in ui.blocks.values())
     # Building the page must not generate anything -- cached examples would do exactly that,
     # and on a real engine it is a minute of synthesis before the first visitor arrives.
     assert not fake.calls
+
+
+def test_the_page_does_not_use_gradios_streaming_audio(demo: Any) -> None:
+    """The one component this page may never grow back.
+
+    ``gr.Audio(streaming=True)`` is served as HLS: every frame is re-encoded to AAC and handed
+    over as its own segment, which is lossy and clicks at each join. The player takes the PCM
+    over server-sent events instead, so no streaming audio component may reappear here.
+    """
+    import gradio as gr
+
+    ui = demo.build_ui(demo.DemoSession(tts=FakeTTS()))
+
+    assert not any(isinstance(block, gr.Audio) and block.streaming for block in ui.blocks.values())
+    # The player is markup plus a load event; both have to be present or the page is inert.
+    html = [block for block in ui.blocks.values() if isinstance(block, gr.HTML)]
+    assert any("kova-status" in str(block.value) for block in html)
+
+
+def test_the_player_is_wired_to_the_endpoint(demo: Any) -> None:
+    script = demo.player_js(stream_path="/somewhere/else")
+
+    assert '"/somewhere/else"' in script
+    assert "window.kovaDemo" in script
+    assert "AudioBufferSourceNode" in script or "createBufferSource" in script
+    assert str(demo.MAX_CHARS) in script
 
 
 def test_build_ui_survives_with_no_engine_at_all(demo: Any, monkeypatch: Any) -> None:
@@ -171,158 +263,236 @@ def test_examples_are_original_prose(demo: Any) -> None:
     assert all(prompt.strip().endswith((".", "?", "!")) for prompt in demo.EXAMPLES)
 
 
+def test_the_app_serves_the_page_and_the_stream(demo: Any, client: Any) -> None:
+    http, _session, _fake = client(FakeTTS(("alto",)))
+
+    with http:
+        page = http.get("/")
+        schema = http.get("/openapi.json").json()
+
+    assert page.status_code == 200
+    assert "kova-clip" in page.text, "the finished-clip player is part of the page"
+    assert demo.STREAM_PATH in schema["paths"], "the protocol the page speaks is documented"
+
+
 # -------------------------------------------------------------------------- the demo: streaming
 
 
-def test_speak_streams_progressively(demo: Any) -> None:
-    fake = FakeTTS(frames=4)
-    session = demo.DemoSession(tts=fake)
+def test_the_stream_is_the_samples_the_model_made(demo: Any, client: Any) -> None:
+    """The point of the endpoint: what the browser plays is bit-for-bit what the codec decoded.
 
-    steps = list(session.speak("Hello there, this is a test.", demo.BASE_VOICE))
+    Nothing between :meth:`KovaTTS.stream` and the speakers may resample, re-encode or
+    otherwise touch the audio, so the concatenated chunks must equal ``generate()`` exactly.
+    """
+    http, _session, fake = client()
 
-    chunks = [step[0] for step in steps if isinstance(step[0], tuple)]
-    assert len(chunks) == 4, "each decoded frame should reach the browser on its own"
-    assert all(rate == SAMPLE_RATE and samples.dtype == np.int16 for rate, samples in chunks)
-    # Audio arrives before the finished clip does, which is what "streaming" has to mean.
-    assert not any(isinstance(step[1], tuple) for step in steps[:-1])
+    with http:
+        stream = speak(http, demo.STREAM_PATH, text="Hello there, this is a test.", seed=7)
 
-    rate, whole = steps[-1][1]
-    assert rate == SAMPLE_RATE
-    assert whole.size == sum(samples.size for _, samples in chunks)
-    assert "First audio in" in steps[-1][2] and "real time" in steps[-1][2]
+    assert stream.status == 200
+    assert len(stream.chunks) == 4, "each decoded frame reaches the browser on its own"
+    assert stream.pcm == to_pcm_bytes(fake.generate("Hello there, this is a test.", seed=7))
+    assert stream.done == {
+        "chunks": 4,
+        "samples": len(stream.pcm) // 2,
+        "duration_seconds": round(len(stream.pcm) / 2 / SAMPLE_RATE, 3),
+        "sample_rate": SAMPLE_RATE,
+    }
 
 
-def test_speak_passes_the_voice_and_a_concrete_seed(demo: Any) -> None:
-    fake = FakeTTS(("alto",))
-    session = demo.DemoSession(tts=fake)
+def test_generating_three_times_in_a_row_works_every_time(demo: Any, client: Any) -> None:
+    """Streaming has to work every time, not only on the first press of a page.
 
-    steps = list(session.speak("Say this.", "alto", seed=4321))
+    Nothing about a run may be left behind on the server, so three requests over one connection
+    have to produce three identical, complete streams. The browser half of the same guarantee is
+    ``clearPlayback()``, which is what stops the *player* carrying state between runs.
+    """
+    http, _session, _fake = client()
 
+    with http:
+        runs = [speak(http, demo.STREAM_PATH, text="Say it again.", seed=1) for _ in range(3)]
+
+    assert [run.status for run in runs] == [200, 200, 200]
+    assert all(run.done is not None and run.error is None for run in runs)
+    assert len({run.pcm for run in runs}) == 1, "the same request must give the same audio"
+    assert all(len(run.chunks) == 4 for run in runs)
+
+
+def test_the_voice_and_a_concrete_seed_reach_the_engine(demo: Any, client: Any) -> None:
+    http, _session, fake = client(FakeTTS(("alto",)))
+
+    with http:
+        stream = speak(http, demo.STREAM_PATH, text="Say this.", voice="alto", seed=4321)
+
+    assert stream.status == 200
     assert fake.calls[0]["voice"] == "alto"
     assert fake.calls[0]["seed"] == 4321
-    assert "4321" in steps[-1][2]
-
-    # A negative seed means "draw one", but the drawn seed is still reported, so the result
-    # can be reproduced by typing it back in.
-    list(session.speak("Again.", "alto", seed=-1))
-    assert isinstance(fake.calls[1]["seed"], int) and fake.calls[1]["seed"] >= 0
 
 
-def test_speak_uses_the_sampling_controls(demo: Any) -> None:
-    fake = FakeTTS()
-    session = demo.DemoSession(tts=fake)
+def test_the_sampling_controls_reach_the_engine(demo: Any, client: Any) -> None:
+    http, _session, fake = client()
 
-    list(session.speak("Hello.", demo.BASE_VOICE, 0.7, 0.85, 30, 1.2, 512, 7))
+    with http:
+        speak(
+            http,
+            demo.STREAM_PATH,
+            text="Hello.",
+            sampling={"temperature": 0.7, "top_p": 0.85, "top_k": 30, "max_tokens": 512},
+        )
 
     params = fake.calls[0]["params"]
     assert (params.temperature, params.top_p, params.top_k) == (0.7, 0.85, 30)
-    assert (params.repetition_penalty, params.max_tokens) == (1.2, 512)
+    assert params.max_tokens == 512
+    # Anything the request left out keeps the tuned preset rather than a library default.
+    assert params.repetition_penalty == demo.TTS_SAMPLING.repetition_penalty
 
 
-def test_preset_follows_the_voice(demo: Any) -> None:
+def test_a_cloned_voice_is_streamable_by_name(demo: Any, client: Any, reference_wav: Path) -> None:
+    """Why the demo serves its own endpoint: a clone is an object, not a name on disk."""
+    http, session, fake = client()
+    session.clone_voice(str(reference_wav), "This is what the clip says.", "mine")
+
+    with http:
+        stream = speak(http, demo.STREAM_PATH, text="Now say something new.", voice="mine")
+
+    assert stream.status == 200 and stream.done is not None
+    assert isinstance(fake.calls[0]["voice"], Voice)
+    assert fake.calls[0]["voice"].name == "mine"
+    # And a clone gets the cloning preset, exactly as the picker would have shown.
+    assert fake.calls[0]["params"].max_tokens == demo.CLONE_SAMPLING.max_tokens
+
+
+def test_preset_follows_the_voice(demo: Any, reference_wav: Path) -> None:
     from kova_tts import CLONE_SAMPLING, TTS_SAMPLING
 
     session = demo.DemoSession(tts=FakeTTS(("alto",)))
     assert session.preset("alto") == TTS_SAMPLING
     assert session.preset(demo.BASE_VOICE) == TTS_SAMPLING
 
-    session.clone_voice(str(_write_reference(session)), "Some words.", "mine")
+    session.clone_voice(str(reference_wav), "Some words.", "mine")
     assert session.preset("mine") == CLONE_SAMPLING
-
-
-def _write_reference(session: Any) -> Path:
-    import tempfile
-
-    from kova_tts.audio import save_wav
-
-    directory = Path(tempfile.mkdtemp(prefix="kova-test-"))
-    return save_wav(directory / "clip.wav", sine(3.0), SAMPLE_RATE)
+    # The two presets differ only in token budget today; the sliders have to reach both.
+    assert TTS_SAMPLING.max_tokens != CLONE_SAMPLING.max_tokens
 
 
 # ------------------------------------------------------------------- the demo: the sad paths
 
 
-def test_empty_text_is_a_sentence_not_an_exception(demo: Any) -> None:
-    session = demo.DemoSession(tts=FakeTTS())
+def test_empty_text_is_a_sentence_not_an_exception(demo: Any, client: Any) -> None:
+    http, _session, fake = client()
 
-    steps = list(session.speak("   ", demo.BASE_VOICE))
+    with http:
+        stream = speak(http, demo.STREAM_PATH, text="   ")
 
-    assert len(steps) == 1
-    assert steps[0][0] is demo.CLEAR and steps[0][1] is demo.CLEAR
-    assert "Type something" in steps[0][2]
-
-
-def test_text_over_the_limit_is_refused_politely(demo: Any) -> None:
-    fake = FakeTTS()
-    session = demo.DemoSession(tts=fake)
-
-    steps = list(session.speak("word " * demo.MAX_CHARS, demo.BASE_VOICE))
-
+    assert stream.status == 422
+    assert "empty" in stream.payloads[0]["message"]
     assert not fake.calls
-    assert "characters" in steps[-1][2]
 
 
-def test_no_voices_installed_still_offers_the_base_voice(demo: Any) -> None:
-    session = demo.DemoSession(tts=FakeTTS(()))
+def test_text_over_the_limit_is_refused_politely(demo: Any, client: Any) -> None:
+    http, _session, fake = client()
+
+    with http:
+        stream = speak(http, demo.STREAM_PATH, text="word " * demo.MAX_CHARS)
+
+    assert stream.status == 422
+    assert "characters" in stream.payloads[0]["message"]
+    assert not fake.calls
+
+
+def test_no_voices_installed_still_offers_the_base_voice(demo: Any, client: Any) -> None:
+    http, session, _fake = client(FakeTTS(()))
 
     assert session.choices() == [(demo.BASE_LABEL, demo.BASE_VOICE)]
     assert session.resolve(demo.BASE_VOICE) is None
     assert "No LoRA voices installed" in "\n".join(session.notices())
-    assert list(session.speak("Hello.", demo.BASE_VOICE))[-1][1] is not None
+    with http:
+        assert speak(http, demo.STREAM_PATH, text="Hello.").done is not None
 
 
-def test_a_second_generation_is_told_to_wait(demo: Any) -> None:
-    session = demo.DemoSession(tts=FakeTTS())
+def test_a_second_generation_is_told_to_wait(demo: Any, client: Any, monkeypatch: Any) -> None:
+    """An overlapping request has to be a sentence with a status code, not a traceback."""
+    import session as demo_session  # importable because the demo put its own directory on the path
 
-    running = session.speak("The first one.", demo.BASE_VOICE)
-    next(running)  # takes the engine
+    monkeypatch.setattr(demo_session, "BUSY_TIMEOUT", 0.05)
+    http, session, _fake = client()
+
+    session._lock.acquire()  # stand in for a generation already in flight
     try:
-        steps = list(session.speak("The second one.", demo.BASE_VOICE))
+        with http:
+            stream = speak(http, demo.STREAM_PATH, text="The second one.")
     finally:
-        running.close()
+        session._lock.release()
 
-    assert len(steps) == 1
-    assert steps[0][0] is None and steps[0][1] is None, "a busy page must not clear the player"
-    assert steps[0][2] == demo.BUSY
+    assert stream.status == 409
+    assert stream.payloads[0] == {"error": "busy", "message": demo.BUSY}
 
-    # Closing the first generator releases the engine again.
-    assert list(session.speak("And now?", demo.BASE_VOICE))[-1][1] is not None
+    # And the engine is free again the moment the first one lets go.
+    with http:
+        assert speak(http, demo.STREAM_PATH, text="And now?").done is not None
 
 
-def test_missing_weights_point_at_the_paths_command(demo: Any) -> None:
+def test_missing_weights_point_at_the_paths_command(demo: Any, client: Any) -> None:
+    from fastapi.testclient import TestClient
+
     def loader() -> Any:
         raise MissingArtifact("Model directory not found at /nowhere.")
 
     session = demo.DemoSession(loader=loader)
+    with TestClient(demo.build_app(session)) as http:
+        stream = speak(http, demo.STREAM_PATH, text="Hello.")
 
-    steps = list(session.speak("Hello.", demo.BASE_VOICE))
-
-    assert "kova-tts paths" in steps[-1][2]
-    assert "/nowhere" in steps[-1][2]
-
-
-def test_generation_failure_is_reported_not_raised(demo: Any) -> None:
-    session = demo.DemoSession(tts=FakeTTS(fail=RuntimeError("CUDA out of memory")))
-
-    steps = list(session.speak("Hello.", demo.BASE_VOICE))
-
-    assert "CUDA out of memory" in steps[-1][2]
+    assert stream.status == 503
+    assert "kova-tts paths" in stream.payloads[0]["message"]
+    assert "/nowhere" in stream.payloads[0]["message"]
 
 
-def test_an_overlapping_engine_is_reported_as_busy(demo: Any) -> None:
+def test_generation_failure_arrives_as_an_error_event(demo: Any, client: Any) -> None:
+    """Once the stream is open the status code is gone, so a failure is a terminal event."""
+    http, _session, _fake = client(FakeTTS(fail=RuntimeError("CUDA out of memory")))
+
+    with http:
+        stream = speak(http, demo.STREAM_PATH, text="Hello.")
+
+    assert stream.status == 200 and stream.done is None
+    assert stream.error is not None
+    assert "CUDA out of memory" in stream.error["message"]
+
+
+def test_an_overlapping_engine_is_reported_as_busy(demo: Any, client: Any) -> None:
     """The engine's own reentrancy guard, reached by a server sharing this process."""
     boom = RuntimeError("This generator is already running a request.")
-    session = demo.DemoSession(tts=FakeTTS(fail=boom))
+    http, _session, _fake = client(FakeTTS(fail=boom))
 
-    assert list(session.speak("Hello.", demo.BASE_VOICE))[-1][2] == demo.BUSY
+    with http:
+        stream = speak(http, demo.STREAM_PATH, text="Hello.")
+
+    assert stream.error is not None and stream.error["message"] == demo.BUSY
 
 
-def test_silence_from_the_model_is_explained(demo: Any) -> None:
-    session = demo.DemoSession(tts=FakeTTS(silent=True))
+def test_a_failed_generation_still_releases_the_engine(demo: Any, client: Any) -> None:
+    http, session, _fake = client(FakeTTS(fail=RuntimeError("nope")))
 
-    steps = list(session.speak("Hello.", demo.BASE_VOICE))
+    with http:
+        speak(http, demo.STREAM_PATH, text="Hello.")
 
-    assert "no audio" in steps[-1][2]
+    assert not session._lock.locked(), "a failure must not leave the model reserved"
+
+
+def test_silence_from_the_model_is_a_stream_with_no_chunks(demo: Any, client: Any) -> None:
+    """The player says so; the protocol just reports an honest zero."""
+    http, _session, _fake = client(FakeTTS(silent=True))
+
+    with http:
+        stream = speak(http, demo.STREAM_PATH, text="Hello.")
+
+    assert stream.chunks == []
+    assert stream.done == {
+        "chunks": 0,
+        "samples": 0,
+        "duration_seconds": 0.0,
+        "sample_rate": SAMPLE_RATE,
+    }
 
 
 # ------------------------------------------------------------------------- the demo: cloning
@@ -337,10 +507,7 @@ def test_cloning_adds_a_usable_voice(demo: Any, reference_wav: Path) -> None:
     assert name == "mine"
     assert "Cloned **mine**" in message
     assert ("mine (cloned)", "mine") in session.choices()
-
-    list(session.speak("Now say something new.", "mine"))
-    assert isinstance(fake.calls[0]["voice"], Voice)
-    assert fake.calls[0]["voice"].name == "mine"
+    assert isinstance(session.resolve("mine"), Voice)
 
 
 def test_cloned_names_do_not_collide(demo: Any, reference_wav: Path) -> None:
@@ -382,6 +549,18 @@ def test_a_silent_reference_is_refused(demo: Any, tmp_path: Path) -> None:
     assert name is None and "silent" in message
 
 
+def test_cloning_while_the_model_is_speaking_waits_its_turn(demo: Any, reference_wav: Path) -> None:
+    """The clone tab and the streaming endpoint share one lock, because they share one model."""
+    session = demo.DemoSession(tts=FakeTTS())
+    session._lock.acquire()
+    try:
+        message, name = session.clone_voice(str(reference_wav), "Words.", "mine")
+    finally:
+        session._lock.release()
+
+    assert name is None and message == demo.BUSY
+
+
 def test_cloning_without_asr_asks_for_the_transcript(demo: Any, reference_wav: Path) -> None:
     session = demo.DemoSession(tts=FakeTTS(transcriber=None))
 
@@ -414,29 +593,6 @@ def test_the_missing_data_extra_is_explained(demo: Any, reference_wav: Path, mon
 
     assert name is None
     assert "faster-whisper" in message and "type the transcript" in message
-
-
-# ------------------------------------------------------------------------- the demo: plumbing
-
-
-def test_updates_translate_the_sentinels(demo: Any) -> None:
-    import gradio as gr
-
-    cleared, untouched, value = demo._updates((demo.CLEAR, None, (SAMPLE_RATE, np.zeros(4))))
-
-    assert cleared is None, "CLEAR empties the component"
-    assert isinstance(untouched, dict) and not set(untouched) - {"__type__"}
-    assert isinstance(value, tuple)
-    assert isinstance(gr.update(), dict)
-
-
-def test_pcm16_is_clipped_not_wrapped(demo: Any) -> None:
-    loud = np.array([-2.0, -1.0, 0.0, 1.0, 2.0], dtype=np.float32)
-
-    converted = demo._pcm16(loud)
-
-    assert converted.dtype == np.int16
-    assert converted.tolist() == [-32767, -32767, 0, 32767, 32767]
 
 
 # ------------------------------------------------------------------------------ the node pack

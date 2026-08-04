@@ -101,12 +101,12 @@ training_example("Hello world.", [12, 7])
 # <|begin_of_text|><|text_prompt_start|>Hello world.<|text_prompt_end|><|speech_start|><|s_12|><|s_7|><|speech_end|>
 ```
 
-`tts_prompt` deliberately omits BOS — that form is handed to engines that prepend it during
-tokenization. `KovaTTS` adds `BEGIN_OF_TEXT` itself. The other two include it, because a
-continuation has to be tokenized as one string.
+`tts_prompt` deliberately omits BOS, so a caller that already emits one is not forced to strip it
+back off; `KovaTTS` adds `BEGIN_OF_TEXT` itself. The other two include it, because a continuation
+has to be tokenized as one string.
 
-The exact byte layout matters. These strings are what the checkpoint saw in training, and a
-stray space or a reordered tag measurably costs WER.
+The exact byte layout matters. These strings are what the checkpoint saw in training, so a stray
+space or a reordered tag puts the prompt off the distribution the model was fitted to.
 
 ## Voice cloning as continuation
 
@@ -122,7 +122,7 @@ Everything about cloning follows from that:
 |---|---|
 | The transcript must match the clip word for word | It is the first half of one sentence the model is reading |
 | The output starts with a re-rendering of the reference | Those codes lead the continuation, so their audio is produced first. `KovaTTS` trims `voice.ref_seconds` off the front |
-| The cloning preset has a low repetition penalty (1.1, against 1.4) | The reference codes at the front *are* repetition; penalising them makes the model drift off the voice |
+| The repetition penalty is low (1.1) | The reference codes at the front *are* repetition; penalising them makes the model drift off the voice |
 | `max_tokens` is higher for cloning (3500, against 2048) | The reference is generated before a word of your text |
 | A long reference costs prompt, KV cache and decode time | It is all real prompt, and it is all decoded before your text |
 
@@ -145,7 +145,7 @@ An eager `transformers` forward costs about 15 ms of host time per step while th
 under 3 ms: the loop is launch-bound by a factor of five. A preallocated static KV cache plus a
 CUDA graph capture of the single-token step takes the host out of the inner loop entirely.
 
-Measured in this checkout, batch 1, bf16, RTX 5090, 4096-token cache:
+Batch 1, bf16, RTX 5090, 4096-token cache:
 
 | | codes/second | real time |
 |---|---|---|
@@ -189,7 +189,7 @@ that.
 
 ### Memory traffic
 
-Two fixes, both A/B'd on one box.
+Two fixes, both measured on the RTX 5090 above.
 
 **The LM head.** `tie_word_embeddings` is true, so `lm_head.weight` *is* the 136576 × 2048
 embedding matrix: 559 MB of the 2.51 GB read per step, 22% of the traffic, to produce logits for
@@ -246,7 +246,7 @@ left is `WINDOW = 31` frames — **387.5 ms at 80 codes/second**, which is where
 per chunk" everywhere else comes from.
 
 `plan_window` is pure arithmetic — no codec, no torch — so the window layout is testable on its
-own. Two failure modes are baked into it, both found during the codec port:
+own. Two failure modes are baked into it, and both are silent if you get them wrong:
 
 1. **Never emit audio the LSTM produced from padding.** If the final window runs past the last
    real code and that audio is emitted, the last ~20 frames drift from a whole-utterance decode
@@ -281,23 +281,44 @@ convolution start warm, and the audio they produce is discarded by sample count.
 
 ## Long text: segment carry
 
-`KovaTTS.split_sentences` cuts text at sentence boundaries; anything still over
-`MAX_SEGMENT_CHARS = 300` is broken at a clause boundary, and only then at whitespace, because a
-break mid-phrase is audible. Fragments under `MIN_SEGMENT_CHARS = 24` are glued onto the next
-segment — "Dr." or "Yes." alone gives the model too little to work with and the result is
-clipped.
+`KovaTTS.split_sentences` packs whole sentences into chunks of up to
+`MAX_SEGMENT_CHARS = 160` characters, so two or three short sentences are generated together
+rather than one at a time. Only a sentence longer than that on its own is broken internally, at
+a clause boundary first and whitespace second, because a break mid-phrase is audible. A trailing
+chunk under `MIN_SEGMENT_CHARS = 24` is merged *backwards* — "Yes." alone gives the model too
+little to work with — which is the one case a chunk exceeds the target, and it is safe because
+the last chunk is never carried.
 
-Each segment is then generated with the previous one threaded into its prompt: **its text in
-front of the new text, its codes in front of the continuation.** Without that, every sentence
-restarts the model's prosody from nothing and the joins are audible.
+Each chunk is then generated with the previous one threaded into its prompt: **its text in front
+of the new text, its codes in front of the continuation.** Without that, every chunk restarts the
+model's prosody from nothing. With no LoRA and no reference to anchor it, the model picks a
+different speaker each time and a paragraph audibly changes voice partway through.
 
 Text and codes have to travel *together*. Carrying codes alone reliably makes the model emit
 `<|speech_end|>` on the first step: it has been handed several seconds of speech for a sentence
 it has not started, so as far as it can tell the sentence is already finished.
 
 The carry is therefore a matched pair, and cannot be truncated to a tail without the two
-drifting apart. A segment longer than `MAX_CARRY_CODES = 640` (about eight seconds) is simply
-not carried, and the next one starts fresh.
+drifting apart. The unit of carry is a whole chunk, which is why the chunk size is the lever:
+
+```python
+CODES_PER_CHAR    = 6.0                                       # an upper bound, not an average
+MAX_SEGMENT_CHARS = 160
+MAX_CARRY_CODES   = ceil(MAX_SEGMENT_CHARS * CODES_PER_CHAR)  # 960 codes, about 12 seconds
+```
+
+The carry limit is *derived* from the chunk size rather than chosen independently, so a chunk the
+splitter emits always fits. That invariant is asserted in the tests. It has to be: when the two
+were independent numbers, 300-character chunks against a 640-code carry meant the carry was
+silently discarded for any sentence over ~140 characters, and ordinary prose lost it on two
+joins out of three.
+
+Sizing the chunk down beats sizing the carry up, because the prompt also has to hold a cloned
+voice's reference. A 160-character chunk leaves room for a reference of about 24 seconds before
+anything has to give; keeping 300-character chunks and growing the carry to match would overflow
+the cache on *every* cloned voice with a 10-second reference. `_prompt_ids` checks the real
+tokenized length against `max_cache_len` and drops the carry if the generation would not fit, so
+the failure mode is a lost carry rather than a crash.
 
 Carried codes are prompt-only. They are never decoded twice, so the audio runs straight through
 the boundary.
@@ -307,9 +328,8 @@ the boundary.
 Adapters are peft LoRAs on the attention projections only (`q_proj`, `k_proj`, `v_proj`,
 `o_proj`), rank 64 with alpha 64. About 55 MB each, 13.6 M trainable parameters.
 
-Two modes, and the difference is measurable. The absolute figures below come from the A/B run
-during development, on the same box as the head and attention numbers above; the ratios are what
-to rely on:
+Two modes, and the difference is measurable. The absolute figures below are from the same
+RTX 5090 as the head and attention numbers above; the ratios are what to rely on:
 
 | | Throughput | Voice switch | Graph |
 |---|---|---|---|
