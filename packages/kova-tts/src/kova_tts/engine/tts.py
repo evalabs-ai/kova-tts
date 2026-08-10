@@ -47,6 +47,7 @@ import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
@@ -54,6 +55,7 @@ import torch
 from kova_codec.constants import SAMPLE_RATE, codes_to_seconds
 from kova_tts import audio as audio_io
 from kova_tts import voices as voices_module
+from kova_tts.engine import backends
 from kova_tts.engine.decoder import (
     CONV_PADDING,
     LOOKAHEAD,
@@ -66,6 +68,9 @@ from kova_tts.engine.generator import DEFAULT_MAX_CACHE_LEN, Generator
 from kova_tts.engine.types import CLONE_SAMPLING, TTS_SAMPLING, AudioFrame, SamplingParams, Voice
 from kova_tts.prompt import clone_prompt, format_audio_tokens, tts_prompt
 from kova_tts.tokens import BEGIN_OF_TEXT
+
+if TYPE_CHECKING:  # pragma: no cover - typing only; mlx is not installed off Apple Silicon
+    from kova_tts.engine.mlx_generator import MLXGenerator
 
 log = logging.getLogger(__name__)
 
@@ -119,7 +124,7 @@ def _ref_text(voice: Voice | None) -> str:
     return voice.ref_text.strip() if voice is not None and voice.is_clone else ""
 
 
-def _warm_codec(codec) -> None:
+def _warm_codec(codec, window: int = WINDOW) -> None:
     """Run one throwaway utterance through the codec so cuDNN picks its algorithms now.
 
     The decoder's first convolution and LSTM autotune on first use, at a cost of a few hundred
@@ -127,8 +132,8 @@ def _warm_codec(codec) -> None:
     paths are exercised because they use different kernels: windowed with LSTM state carried,
     and whole-utterance.
     """
-    codes = [0] * (2 * (WINDOW + 2 * LOOKAHEAD + CONV_PADDING))
-    decoder = StreamingDecoder(codec)
+    codes = [0] * (2 * (window + 2 * LOOKAHEAD + CONV_PADDING))
+    decoder = StreamingDecoder(codec, window=window)
     decoder.push(codes)
     decoder.finish()
     decode_all(codec, codes)
@@ -141,7 +146,8 @@ class KovaTTS:
     substitute either half.
 
     Args:
-        generator: The LM decode loop.
+        generator: The LM decode loop, on either backend -- see
+            :mod:`kova_tts.engine.backends`.
         codec: A decode-only codec, or ``None`` to build one on first use.
         lora_root: Directory of LoRA voices; ``None`` reads it from the environment.
         merge_lora: Fold LoRA weights into the base model. Faster per step, and voices can
@@ -154,23 +160,34 @@ class KovaTTS:
             clip.
         transcriber: ``callable(path) -> str`` used by :meth:`clone` when no transcript is
             given. There is no ASR in this package; this is the seam the ``data`` extra fills.
+        decode_window: Frames of audio :meth:`stream` emits per codec call, and therefore the
+            spacing of its frames. Every window is one pass through the whole decoder stack, so
+            the fixed per-call cost is paid ``1/decode_window`` times per frame; the default
+            :data:`~kova_tts.engine.decoder.WINDOW` is sized for CUDA, where that cost is small
+            next to the work. On Metal the fused kernels bring that cost right down, but it is
+            still a fixed cost per window: measured on a base M1, the codec sustains 4.9x real
+            time at 31 frames and 8.5x at 191. Raising it trades frame latency for throughput
+            and changes no audio -- the windows are bit-comparable with a whole-utterance decode
+            at any size.
     """
 
     def __init__(
         self,
-        generator: Generator,
+        generator: Generator | MLXGenerator,
         *,
         codec=None,
         lora_root: str | os.PathLike[str] | None = None,
         merge_lora: bool = True,
         clone_preroll: int | None = None,
         transcriber: Callable[[str], str] | None = None,
+        decode_window: int = WINDOW,
     ) -> None:
         self.generator = generator
         self.lora_root = lora_root
         self.merge_lora = merge_lora
         self.clone_preroll = clone_preroll
         self.transcriber = transcriber
+        self.decode_window = int(decode_window)
         self.sample_rate = SAMPLE_RATE
         self._codec = codec
         self._encoding_codec = None
@@ -187,22 +204,29 @@ class KovaTTS:
         *,
         codec: str | os.PathLike[str] | None = None,
         wavlm: str | os.PathLike[str] | None = None,
+        backend: str | None = None,
         device: torch.device | str | None = None,
-        dtype: torch.dtype = torch.bfloat16,
+        dtype: torch.dtype | None = None,
         max_cache_len: int = DEFAULT_MAX_CACHE_LEN,
         cuda_graph: bool | None = None,
         lora_root: str | os.PathLike[str] | None = None,
         merge_lora: bool = True,
         clone_preroll: int | None = None,
         transcriber: Callable[[str], str] | None = None,
+        decode_window: int = WINDOW,
     ) -> KovaTTS:
         """Load the LM now and the codec on first use.
 
         Every path resolves through :mod:`kova_tts.paths`: the argument, then the matching
         ``KOVA_*`` environment variable, then the Hugging Face Hub.
+
+        `backend` picks the decode loop -- ``"torch"``, ``"mlx"``, or ``None`` to let
+        :func:`kova_tts.engine.backends.resolve` read it off the checkpoint. `device`, `dtype`
+        and `cuda_graph` describe the torch loop only; MLX has no counterpart to any of them.
         """
-        generator = Generator.from_pretrained(
+        generator = backends.load_generator(
             model,
+            backend=backend,
             device=device,
             dtype=dtype,
             max_cache_len=max_cache_len,
@@ -214,6 +238,7 @@ class KovaTTS:
             merge_lora=merge_lora,
             clone_preroll=clone_preroll,
             transcriber=transcriber,
+            decode_window=decode_window,
         )
         tts._codec_path = codec
         tts._wavlm_path = str(wavlm) if wavlm is not None else None
@@ -228,7 +253,7 @@ class KovaTTS:
         """
         if self._codec is None:
             self._codec = load_codec(self._codec_path, device=self._device)
-            _warm_codec(self._codec)
+            _warm_codec(self._codec, self.decode_window)
         return self._codec
 
     @property
@@ -343,7 +368,7 @@ class KovaTTS:
         out_rate = self._output_rate(sample_rate)
         resolved = self._prepare(voice)
         params = self._sampling(resolved, params, seed)
-        decoder = StreamingDecoder(self.codec)
+        decoder = StreamingDecoder(self.codec, window=self.decode_window)
         if resolved is not None and resolved.is_clone:
             decoder.prime(self._preroll(resolved))
         resampler = audio_io.StreamingResampler(self.sample_rate, out_rate)

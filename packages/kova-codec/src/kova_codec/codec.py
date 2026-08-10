@@ -11,6 +11,7 @@ import torch
 import torch.nn.functional as F
 
 from kova_codec.constants import HOP_LENGTH, SAMPLE_RATE, WAVLM_MODEL
+from kova_codec.devices import default_device, is_accelerator
 from kova_codec.vq.codec_decoder import CodecDecoder
 from kova_codec.vq.codec_encoder import CodecEncoder
 from kova_codec.vq.module import LSTMState, SemanticEncoder
@@ -34,14 +35,16 @@ class KovaCodec(torch.nn.Module):
     Prefer :meth:`from_checkpoint` over calling this constructor directly.
 
     Args:
-        checkpoint_path: Lightning ``.ckpt`` (or a plain ``state_dict`` bundle) with the
-            codec weights.
-        device: Defaults to CUDA when available.
+        checkpoint_path: Codec checkpoint — a ``.ckpt`` or a plain ``state_dict`` bundle.
+        device: Defaults to CUDA, then Apple's Metal backend, then the CPU.
         dtype: Dtype for the codec stack. ``None`` resolves to float16 for **decode-only
-            CUDA** instances and float32 otherwise: fp16 *encode* flips a couple of percent of
-            VQ codes relative to fp32 and has not been perceptually validated, while fp16
-            *decode* is 1.3x to 1.7x faster for ~42 dB SNR against fp32. WavLM always stays
-            float32.
+            accelerator** instances and float32 otherwise: fp16 *encode* flips a couple of
+            percent of VQ codes relative to fp32 and has not been perceptually validated,
+            while fp16 *decode* is 1.3x to 1.7x faster on CUDA and 1.3x on Metal, for ~42 dB
+            SNR against fp32 on CUDA and ~39 dB on Metal. WavLM always stays float32.
+
+            Metal's float32 decode tracks the CPU's to 105 dB, so the backend itself is exact;
+            the fp16 figure is the dtype, not the device.
         wavlm_model_name: HuggingFace repo id or local directory for WavLM-large. ``None``
             builds a **decode-only** codec: WavLM is never loaded and :meth:`encode` raises.
     """
@@ -57,16 +60,12 @@ class KovaCodec(torch.nn.Module):
 
         # Read by kova_tts.engine.decoder.StreamingDecoder, which takes a codec and no config.
         self.sample_rate = SAMPLE_RATE
-        self.device = (
-            torch.device(device)
-            if device is not None
-            else torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        )
+        self.device = torch.device(device) if device is not None else default_device()
         self._encode_enabled = wavlm_model_name is not None
         if dtype is None:
             dtype = (
                 torch.float16
-                if self.device.type == "cuda" and not self._encode_enabled
+                if is_accelerator(self.device) and not self._encode_enabled
                 else torch.float32
             )
         self.dtype = dtype
@@ -142,7 +141,7 @@ class KovaCodec(torch.nn.Module):
 
         Args:
             checkpoint_path: Path to the codec checkpoint.
-            device: Defaults to CUDA when available.
+            device: Defaults to CUDA, then Apple's Metal backend, then the CPU.
             dtype: See the class docstring; ``None`` picks a sensible default per mode.
             wavlm: WavLM-large repo id or local directory. ``None`` uses the default repo.
             decode_only: Skip WavLM entirely. :meth:`encode` then raises, but startup is
@@ -160,10 +159,9 @@ class KovaCodec(torch.nn.Module):
     def load_from_checkpoint(
         self, checkpoint_path: str | os.PathLike[str], ckpt: dict[str, Any] | None = None
     ) -> None:
-        """Load encoder, decoder and semantic weights out of a Lightning checkpoint.
+        """Load encoder, decoder and semantic weights out of a checkpoint.
 
-        The checkpoint is a full training bundle: discriminators, mel losses and a copy of
-        WavLM ride along under their own prefixes and are ignored here.
+        Weights are matched by prefix; any other entry in the state dict is ignored.
         """
         log.debug("Loading codec checkpoint from %s", checkpoint_path)
         if ckpt is None:

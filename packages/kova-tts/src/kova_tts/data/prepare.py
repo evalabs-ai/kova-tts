@@ -5,8 +5,8 @@
 
 Three things about the order are load-bearing. **Trim before normalise**, because leading
 silence drags the integrated loudness of a clip down and the gain applied would then be wrong.
-**Normalise before encode**, because the codec's training clips were LUFS-normalised to -23 with
-exactly this procedure and it is trained on that level. **Transcribe after segmenting**, because
+**Normalise before encode**, so every clip in the corpus reaches the codec at the same level
+whatever it was recorded at. **Transcribe after segmenting**, because
 a recording that gets cut into six clips needs six transcripts, and there is no honest way to
 divide one transcript across the cuts -- so a clip that *has* a transcript is never split; it is
 reported as too long and the user is told to cut it or pass ``--transcribe``.

@@ -46,8 +46,9 @@ def load_codec(
     import torch
 
     from kova_codec import KovaCodec
+    from kova_codec.devices import default_device
 
-    resolved_device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    resolved_device = device or default_device()
     return KovaCodec.from_checkpoint(
         paths.codec_path(checkpoint),
         device=resolved_device,

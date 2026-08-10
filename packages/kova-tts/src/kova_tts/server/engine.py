@@ -23,6 +23,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -71,6 +72,17 @@ class Engine:
         """
         generator = getattr(self.tts, "generator", None)
         return str(getattr(generator, "device", "unknown"))
+
+    @property
+    def backend(self) -> str:
+        """Which decode loop is running -- ``torch`` or ``mlx``.
+
+        Worth reporting next to the device because on an Apple machine both backends say
+        ``mps``: the codec is torch either way, and the difference between four times slower
+        than real time and faster than it is which loop drives the LM.
+        """
+        generator = getattr(self.tts, "generator", None)
+        return str(getattr(generator, "backend", "unknown"))
 
     @property
     def sample_rate(self) -> int:
@@ -184,21 +196,49 @@ class Engine:
         return aiter_frames(self.tts.stream(text, voice, params=params, seed=seed))
 
 
+@contextlib.contextmanager
+def pinned_worker(name: str) -> Iterator[ThreadPoolExecutor]:
+    """One dedicated thread, for the whole life of one MLX-backed iterator.
+
+    Anything that steps an iterator belonging to the MLX generator has to step it from the *same*
+    thread every time, which :func:`asyncio.to_thread` cannot promise: that helper submits to the
+    default pool, which is free to pick a different worker per call. MLX binds a GPU stream to
+    the thread that created it, so an utterance resumed elsewhere raises ``There is no
+    Stream(gpu, N) in current thread`` the moment it touches an array the first thread made.
+
+    A **seeded** generation dies on its second step that way, because ``mx.random.key`` is
+    exactly such an array. An unseeded one survives on the global generator, but still pays for a
+    fresh GPU stream per step. One worker for the whole iterator fixes both, and costs a thread
+    per in-flight request -- which is one, since the engine is batch-1.
+
+    ``shutdown(wait=False)`` because a cancelled consumer must not block the event loop until the
+    in-flight step finishes on the GPU. The worker is never reused, so letting it retire on its
+    own is safe; closing the iterator is what actually releases the generator.
+    """
+    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix=name)
+    try:
+        yield pool
+    finally:
+        pool.shutdown(wait=False)
+
+
 async def aiter_frames(frames: Iterator[AudioFrame]) -> AsyncIterator[AudioFrame]:
     """Drive a blocking frame iterator from async code, one thread hop per frame.
 
     A hop costs microseconds and frames are ~390 ms apart, so the overhead is invisible; what it
     buys is an event loop that stays responsive while the GPU works, which is the difference
     between a WebSocket that answers a ``close_context`` promptly and one that answers it after
-    the current utterance.
+    the current utterance. Every hop lands on the same thread -- see :func:`pinned_worker`.
     """
     done = object()
+    loop = asyncio.get_running_loop()
     try:
-        while True:
-            frame = await asyncio.to_thread(next, frames, done)
-            if frame is done:
-                return
-            yield frame  # type: ignore[misc]
+        with pinned_worker("kova-frames") as pump:
+            while True:
+                frame = await loop.run_in_executor(pump, next, frames, done)
+                if frame is done:
+                    return
+                yield frame  # type: ignore[misc]
     finally:
         # A consumer that gives up -- a disconnected SSE client, a cancelled flush -- leaves the
         # underlying generator suspended mid-decode with its "one request in flight" flag still

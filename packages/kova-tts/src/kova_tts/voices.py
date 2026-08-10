@@ -129,9 +129,9 @@ def from_audio(
     the target text, so a wrong transcript makes the model try to speak words the reference
     codes do not contain, and the output garbles.
 
-    The clip is loudness-normalised to -23 LUFS before encoding because the training corpus
-    was, and the codec's semantic features are not level-invariant. Passing an already-loaded
-    waveform skips only the file read, not the normalisation.
+    The clip is loudness-normalised to -23 LUFS before encoding, so that every reference
+    reaches the codec at the same level. Passing an already-loaded waveform skips only the
+    file read, not the normalisation.
     """
     text = (transcript or "").strip()
     if not text:

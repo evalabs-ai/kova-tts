@@ -118,7 +118,7 @@ class TestFromAudio:
         assert voice.ref_seconds == pytest.approx(3.0)
 
     def test_normalises_loudness_before_encoding(self):
-        """The training corpus was normalised to -23 LUFS and the codec is not level-invariant."""
+        """Clips are normalised to -23 LUFS so every reference encodes at one level."""
         codec = FakeCodec()
         quiet = self.wav() * 0.01
         voices.from_audio(quiet, "Hello there.", codec=codec)

@@ -609,18 +609,24 @@ class Session:
         this one starts counting from.
 
         A hop costs microseconds against a decode step's milliseconds; what it buys is an event
-        loop free to send the audio of earlier codes while these are still being generated.
+        loop free to send the audio of earlier codes while these are still being generated. Every
+        hop lands on the same thread, which on MLX is not optional -- see
+        :func:`~kova_tts.server.engine.pinned_worker`.
         """
+        from kova_tts.server.engine import pinned_worker
+
         produced = 0
+        loop = asyncio.get_running_loop()
         stream = self.model.codes(ids, params)
         try:
-            while limit is None or len(self._chunk.codes) < limit:
-                code = await asyncio.to_thread(next, stream, None)
-                if code is None:
-                    break
-                produced += 1
-                self._chunk.codes.append(code)
-                codes.put_nowait(code)
+            with pinned_worker("kova-codes") as pump:
+                while limit is None or len(self._chunk.codes) < limit:
+                    code = await loop.run_in_executor(pump, next, stream, None)
+                    if code is None:
+                        break
+                    produced += 1
+                    self._chunk.codes.append(code)
+                    codes.put_nowait(code)
             return produced
         finally:
             # The LM marks itself in flight for the life of this iterator and clears the mark in

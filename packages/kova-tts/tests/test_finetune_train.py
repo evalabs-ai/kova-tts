@@ -200,6 +200,13 @@ def test_end_to_end_training_lowers_the_loss_and_writes_a_loadable_adapter(tmp_p
     """
     import torch
 
+    # Not just "an accelerator": this test picks its card through nvidia-smi and pins the
+    # child process with CUDA_VISIBLE_DEVICES, neither of which means anything anywhere else.
+    # Finetuning on Apple Silicon is a separate question -- see docs/apple-silicon.md -- and
+    # a machine without CUDA should skip here rather than die inside subprocess.
+    if not torch.cuda.is_available():
+        pytest.skip("finetuning needs a CUDA device")
+
     rng = random.Random(0)
     lines = [
         {

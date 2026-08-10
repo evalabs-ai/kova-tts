@@ -19,7 +19,9 @@ Then open <http://127.0.0.1:7860>.
 | `--open` | open a browser window on startup |
 | `--preload` | load the weights at startup rather than on the first generation |
 | `--model` / `--codec` / `--wavlm` / `--lora-dir` | override the configured paths |
-| `--device` | e.g. `cuda:1` |
+| `--device` | e.g. `cuda:1` or `mps` |
+| `--backend` | `auto`, `torch` or `mlx`; the default reads it off the checkpoint |
+| `--decode-window` | Codec frames per streamed chunk. Worth raising to 62 on Apple Silicon |
 | `-v` | log what the engine is doing |
 
 Anything left unset resolves through `KOVA_*` in your `.env`, and then through the Hugging Face
@@ -58,7 +60,8 @@ the life of the process and are never written to disk.
 - **One generation at a time.** The model has a single KV cache and refuses to interleave
   requests, so the demo serializes them and tells a second visitor to wait rather than showing
   them a traceback.
-- **On a CPU it is very slow.** The banner says so; a CUDA device is what this is for.
+- **On a CPU it is very slow.** The banner says so; a CUDA device is what this is for. On Apple
+  Silicon it runs a little under real time, and the banner says which backend it picked.
 - Long text is generated chunk by chunk — a few short sentences at a time — with the previous
   chunk carried into the next prompt, which is why the joins hold together. The demo accepts
   about 1200 characters at a time; use the Python API for anything longer.

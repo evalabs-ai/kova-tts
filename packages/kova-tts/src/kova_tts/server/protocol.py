@@ -285,6 +285,9 @@ class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
     model_loaded: bool
     device: str
+    #: Which decode loop the LM runs on: ``torch`` or ``mlx``. Both report ``mps`` as their
+    #: device on Apple Silicon, so the device alone does not say which one is in use.
+    backend: str = "unknown"
     sample_rate: int
     voices: int
     busy: bool

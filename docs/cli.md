@@ -50,10 +50,13 @@ wavlm     /models/wavlm-large
 codec     /models/kova/codec.pt
 loras     /models/kova/voices
 voices    my_voice
+backend   torch
 ```
 
 Exits `0` when everything resolved, `1` when anything did not. `config` names the `.env` that
-was loaded, or says none was found. See [Installation](installation.md#check-that-it-worked).
+was loaded, or says none was found. `backend` is the decode loop that model would be loaded
+with, answered from the checkpoint on disk without loading anything —
+see [Apple Silicon](apple-silicon.md). See [Installation](installation.md#check-that-it-worked).
 
 ---
 
@@ -124,7 +127,8 @@ overall; it is here because time to first audio is the number a streaming deploy
 | `--clone-text TEXT` | What the reference says, word for word |
 | `--temperature`, `--top-p`, `--top-k`, `--repetition-penalty`, `--max-tokens` | Sampling; unset flags keep the preset the voice implies |
 | `--model`, `--codec`, `--wavlm`, `--lora-dir` | Override the configured `KOVA_*` path |
-| `--device` | Torch device, e.g. `cuda:1` |
+| `--device` | Torch device, e.g. `cuda:1` or `mps` |
+| `--backend` | `auto`, `torch` or `mlx`. The default reads it off the checkpoint — see [Apple Silicon](apple-silicon.md) |
 | `--asr-model`, `--asr-language`, `--asr-device` | Transcription, used only when cloning without `--clone-text` |
 
 Sampling flags are all-or-nothing per preset: leave them alone and the engine picks the preset
@@ -209,7 +213,9 @@ Needs `uv sync --extra server`. Full page: [Server](server.md).
 |---|---|
 | `--host`, `--port` | Where to bind. Loopback by default, deliberately: there is no authentication |
 | `--model`, `--codec`, `--wavlm`, `--lora-dir`, `--device` | Override the configured paths |
+| `--backend` | `auto`, `torch` or `mlx`; the default reads it off the checkpoint |
 | `--clone-preroll N` | Reference codes decoded to warm a cloned generation (default 80, one second) |
+| `--decode-window N` | Codec frames per streamed chunk, and so how far apart they are (default 31, 388 ms). Worth raising on [Apple Silicon](apple-silicon.md) |
 | `--voice-alias NAME=VOICE` | Point one of OpenAI's stock voice names at a real one, e.g. `alloy=my_voice`. Repeatable |
 | `--busy-timeout SECONDS` | How long a second caller waits before a 409 (default 5; `0` refuses at once) |
 | `--no-warmup` | Skip the startup generation; the first request pays for it instead |
@@ -233,6 +239,8 @@ installed package. Full page: [Demo](demo.md).
 | `--open` | Open a browser window on startup |
 | `--preload` | Load and warm up at startup, so the first visitor waits for none of it |
 | `--model`, `--codec`, `--wavlm`, `--lora-dir`, `--device` | Override the configured paths |
+| `--backend` | `auto`, `torch` or `mlx`; the default reads it off the checkpoint |
+| `--decode-window N` | Codec frames per streamed chunk. Worth raising on [Apple Silicon](apple-silicon.md) |
 | `-v`, `--verbose` | Log what the engine is doing |
 
 ---

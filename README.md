@@ -28,6 +28,10 @@ cd kova-tts
 uv sync                   # add --all-extras for the server, demo, ASR and finetuning
 ```
 
+On an Apple Silicon Mac, add `--extra mlx` and use a checkpoint converted for it: a base M1
+lands at 0.7–0.8x real time end to end, against several times real time on a recent NVIDIA card.
+See [docs/apple-silicon.md](docs/apple-silicon.md).
+
 > [!IMPORTANT]
 > **The Hugging Face repository is not published yet.** With no local checkpoints configured,
 > `KovaTTS.from_pretrained()` falls through to the Hub and raises a 404 — there is nothing to
@@ -106,9 +110,9 @@ uv run kova-tts --help    # paths, generate, prepare-data, finetune, merge, serv
 ```
 
 The first generation in a process is slow: the codec loads lazily on it. Warm, generation ran at
-about 4x real time on an RTX 5090 and 2.6x on an RTX 3090, with audio starting about 190 ms in.
-The decode step is memory-bound, so it tracks bandwidth; measure your own card before relying on
-a number. [Details](docs/index.md#performance).
+about 4x real time on an RTX 5090 and 2.6x on an RTX 3090, with audio starting about 190 ms in,
+and about 0.75x on a base M1. The decode step is memory-bound, so it tracks bandwidth; measure
+your own hardware before relying on a number. [Details](docs/index.md#performance).
 
 ## What else is here
 

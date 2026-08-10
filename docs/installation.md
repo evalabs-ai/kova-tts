@@ -5,8 +5,11 @@
 - Python 3.10 or newer.
 - [uv](https://docs.astral.sh/uv/). Everything below assumes it; `pip` works too, but uv is what
   the lockfile and the CI job use.
-- A CUDA GPU for anything interactive. The code runs on CPU — the tests do — but generation is
-  far slower than real time there, so a CPU box is for development, not for listening.
+- A CUDA GPU for anything interactive, or an Apple Silicon Mac — see
+  [Apple Silicon](apple-silicon.md), which needs its own checkpoint and gets you a little under
+  real time rather than several times it. The code runs on CPU too — the tests do — but
+  generation is far slower than real time there, so a CPU box is for development, not for
+  listening.
 - Checkpoints on disk. See [Getting the weights](#getting-the-weights); this is the step that
   currently needs the most attention.
 
@@ -50,6 +53,7 @@ Each extra is a feature you may not want. Install the ones you need:
 | `demo` | gradio | `kova-tts demo` |
 | `data` | faster-whisper | Transcribing reference clips and recordings without transcripts |
 | `finetune` | accelerate, pyyaml | `kova-tts finetune` and `kova-tts merge` |
+| `mlx` | mlx, mlx-lm | The MLX decode loop on [Apple Silicon](apple-silicon.md). macOS/arm64 wheels only |
 
 ```bash
 uv sync --extra server            # one extra

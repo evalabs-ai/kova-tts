@@ -138,9 +138,37 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--codec", default=None, help="codec checkpoint")
     parser.add_argument("--wavlm", default=None, help="WavLM directory or Hub repo id")
     parser.add_argument("--lora-dir", default=None, help="directory of LoRA voices")
-    parser.add_argument("--device", default=None, help="torch device, e.g. cuda:1")
+    parser.add_argument("--device", default=None, help="torch device, e.g. cuda:1 or mps")
+    parser.add_argument(
+        "--decode-window",
+        type=int,
+        default=None,
+        help="codec frames per streamed chunk, and so how far apart they are; raising it "
+        "trades latency for throughput, which is worth doing on Apple Silicon",
+    )
+    parser.add_argument(
+        "--backend",
+        default=None,
+        choices=("auto", "torch", "mlx"),
+        help="decode loop; the default reads it off the checkpoint",
+    )
     parser.add_argument("-v", "--verbose", action="store_true", help="log what the engine is doing")
     return parser
+
+
+def _banner_backend(args: argparse.Namespace) -> str | None:
+    """Which backend the banner should name, resolved without loading anything.
+
+    The banner paints before the weights are read, so this has to answer from the checkpoint
+    on disk. A checkpoint that cannot be resolved at all is not this function's problem --
+    the banner has its own line for that -- so it answers ``None`` and says nothing.
+    """
+    from kova_tts.engine import backends
+
+    try:
+        return backends.resolve(args.model, args.backend)
+    except Exception:  # noqa: BLE001 - a banner must never be the thing that fails to load
+        return None
 
 
 def share_link(host: str, port: int) -> str | None:
@@ -179,9 +207,12 @@ def main(argv: list[str] | None = None) -> int:
             wavlm=args.wavlm,
             lora_dir=args.lora_dir,
             device=args.device,
+            backend=args.backend,
+            decode_window=args.decode_window,
         ),
         lora_root=args.lora_dir,
         device=args.device,
+        backend=_banner_backend(args),
     )
     if args.preload:
         try:

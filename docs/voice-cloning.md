@@ -78,9 +78,9 @@ cloned.wav  1.66 s of audio in 4.5 s (0.4x)
 | Content | One speaker, no music, no second voice, no heavy room |
 | Format | Anything `soundfile` reads; resampled to 32 kHz mono for you |
 
-Loudness is normalised to −23 LUFS before encoding, because the training clips were, and the
-codec's semantic features are not level-invariant. You do not do this yourself — `clone` does
-it, whether you pass a path or an already-loaded waveform.
+Loudness is normalised to −23 LUFS before encoding, so that every reference clip reaches the
+codec at the same level regardless of how it was recorded. You do not do this yourself —
+`clone` does it, whether you pass a path or an already-loaded waveform.
 
 ## Sampling
 

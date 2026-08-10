@@ -62,6 +62,7 @@ class DemoSession:
         lora_root: Where to look for LoRA voices *before* the engine exists, so the voice picker
             is populated on the first paint.
         device: Only used to describe the machine in the banner; the loader owns the real one.
+        backend: Likewise -- which decode loop the banner should name.
     """
 
     def __init__(
@@ -71,11 +72,13 @@ class DemoSession:
         loader: Callable[[], Any] | None = None,
         lora_root: str | os.PathLike[str] | None = None,
         device: str | None = None,
+        backend: str | None = None,
     ) -> None:
         self._tts = tts
         self._loader = loader
         self._lora_root = lora_root
         self._device = device
+        self._backend = backend
         self._cloned: dict[str, Voice] = {}
         # Non-reentrant engine, non-reentrant page: the streaming endpoint and the clone tab
         # both take this, so a concurrent request is answered instead of crashing the model.
@@ -284,10 +287,17 @@ class DemoSession:
         if device.startswith("cpu"):
             lines.append(
                 "**Running on the CPU.** Generation will work, but a sentence takes minutes "
-                "rather than seconds; a CUDA device is strongly recommended."
+                "rather than seconds; a CUDA device or Apple Silicon is strongly recommended."
+            )
+        elif device.startswith("mps") and self._backend != "mlx":
+            lines.append(
+                "**Running the torch backend on Metal.** It works, at roughly a quarter of "
+                "real time. Point `KOVA_MODEL_PATH` at an MLX-converted checkpoint for the "
+                "fast path -- see `docs/apple-silicon.md`."
             )
         else:
-            lines.append(f"Running on `{device}`.")
+            via = f" via the {self._backend} backend" if self._backend else ""
+            lines.append(f"Running on `{device}`{via}.")
 
         if self._tts is None:
             try:
@@ -312,9 +322,9 @@ class DemoSession:
 def _default_device() -> str:
     """What torch would pick, named, so the banner can be honest about it."""
     try:
-        import torch
+        from kova_codec.devices import default_device
 
-        return "cuda" if torch.cuda.is_available() else "cpu"
+        return default_device().type
     except Exception:  # pragma: no cover - torch is a hard dependency; this is belt and braces
         return "cpu"
 
@@ -350,6 +360,8 @@ def load_engine(
     wavlm: str | None = None,
     lora_dir: str | None = None,
     device: str | None = None,
+    backend: str | None = None,
+    decode_window: int | None = None,
 ) -> Any:
     """Build the real engine. Called at most once per process, on the first generation."""
     from kova_tts import KovaTTS
@@ -359,9 +371,12 @@ def load_engine(
         model,
         codec=codec,
         wavlm=wavlm,
+        backend=backend,
         device=device,
         lora_root=lora_dir,
         transcriber=build_transcriber(),
+        # Omitted rather than passed as None, so the engine keeps owning the default.
+        **({} if decode_window is None else {"decode_window": decode_window}),
     )
 
 

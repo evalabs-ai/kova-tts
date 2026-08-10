@@ -139,6 +139,15 @@ clip.
 which is exactly why a plain torch loop can win here. Two things dominate a 1B decode step at
 batch 1, and both are dealt with.
 
+There are in fact two of these loops, and `kova_tts.engine.backends` picks between them by
+looking at the checkpoint rather than at the machine. The torch loop below is the general one.
+The other, `kova_tts.engine.mlx_generator`, exists because on Apple Silicon neither of the two
+fixes below is available — there are no CUDA graphs, and the traffic problem needs quantized
+weights that torch cannot read — so the same two problems are solved with different tools:
+4-bit weights, an output head sliced on disk instead of at load time, and a sampler that stays
+inside the MLX graph so the host never stalls the loop. Same contract, same sampling order,
+same audio. [Apple Silicon](apple-silicon.md) has the numbers.
+
 ### Python, and the CUDA graph
 
 An eager `transformers` forward costs about 15 ms of host time per step while the GPU work is
@@ -220,6 +229,12 @@ to the audio block.
 The repetition penalty is seeded from the prompt: every audio token already in the prompt
 counts as seen, so a reference clip's codes and any carried context are penalised the same way
 generated tokens are.
+
+The MLX backend works in the same idea and different arithmetic: its head is a *contiguous
+slice* of the id space rather than a gather of scattered rows, so a row is `id - offset`, and
+the two ids inside that slice which are not emittable are biased to `-inf` instead of being
+left out. The offset and the width come from the artifact's own `config.json`, and a head that
+does not cover every emittable id is rejected at load.
 
 ### Not reentrant
 
@@ -428,6 +443,10 @@ The preallocated static cache, the CUDA graph over the single-token step, the na
 the single-query attention gemv are what address that, and they are the whole optimisation
 story: four changes, all of them ordinary torch, all of them in `engine/generator.py`, which you
 can step through.
+
+The MLX backend is the one exception, and it earns it: on Apple Silicon the equivalent changes
+are not expressible in torch at all. It is still a plain loop in one file, reading a checkpoint
+converted ahead of time rather than reshaping one at load.
 
 ### No sample-audio evaluation during training
 

@@ -42,6 +42,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from kova_codec.devices import default_device
 from kova_tts import paths
 from kova_tts.engine import sampling
 from kova_tts.engine.types import TTS_SAMPLING, SamplingParams
@@ -145,6 +146,10 @@ class Generator:
     generation while a :meth:`stream` is still running raises rather than silently interleaving.
     """
 
+    #: Which decode loop this is, for ``/health`` and the logs. The Apple counterpart is
+    #: :class:`~kova_tts.engine.mlx_generator.MLXGenerator`.
+    backend = "torch"
+
     def __init__(
         self,
         model: Any,
@@ -205,7 +210,7 @@ class Generator:
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
         resolved = paths.model_path(model)
-        target = torch.device(device) if device is not None else _default_device()
+        target = torch.device(device) if device is not None else default_device()
         lm = AutoModelForCausalLM.from_pretrained(
             resolved, dtype=dtype, attn_implementation=register_attention()
         )
@@ -667,7 +672,3 @@ def _adapter_name(adapter: Path) -> str:
 
 def _model_device(model: Any) -> torch.device:
     return next(model.parameters()).device
-
-
-def _default_device() -> torch.device:
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")

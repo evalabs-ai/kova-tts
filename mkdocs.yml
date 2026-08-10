@@ -53,6 +53,7 @@ nav:
   - Getting started:
       - Installation: installation.md
       - Quickstart: quickstart.md
+      - Apple Silicon: apple-silicon.md
       - Voice cloning: voice-cloning.md
   - Interfaces:
       - Python API: python-api.md

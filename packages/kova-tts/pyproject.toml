@@ -56,6 +56,15 @@ finetune = [
     "accelerate>=1.0",
     "pyyaml>=6.0",
 ]
+# Apple Silicon only. The MLX decode backend (`kova_tts.engine.mlx_generator`) and the
+# conversion command that feeds it; `mlx` itself arrives with `mlx-lm` but is imported
+# directly here, so it is declared. Both wheels are macOS/arm64-only, which is why this is an
+# extra rather than a platform-marked base dependency: `uv sync --extra mlx` on Linux should
+# fail loudly rather than install nothing and leave `--backend mlx` mysteriously absent.
+mlx = [
+    "mlx>=0.29",
+    "mlx-lm>=0.28",
+]
 
 [project.scripts]
 kova-tts = "kova_tts.cli:main"

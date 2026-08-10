@@ -79,10 +79,21 @@ class KovaTTSLoader:
         return {
             "required": {
                 "device": (
-                    ["auto", "cuda", "cuda:0", "cuda:1", "cpu"],
-                    {"default": "auto", "tooltip": "auto uses CUDA when it is available."},
+                    ["auto", "cuda", "cuda:0", "cuda:1", "mps", "cpu"],
+                    {
+                        "default": "auto",
+                        "tooltip": "auto uses CUDA, then Apple's Metal backend, then the CPU.",
+                    },
                 ),
                 "precision": (["bfloat16", "float16", "float32"], {"default": "bfloat16"}),
+                "backend": (
+                    ["auto", "torch", "mlx"],
+                    {
+                        "default": "auto",
+                        "tooltip": "Decode loop. auto reads it off the checkpoint; mlx needs an "
+                        "Apple-converted model and ignores device and precision.",
+                    },
+                ),
             },
             "optional": {
                 "model": (
@@ -112,26 +123,39 @@ class KovaTTSLoader:
         self,
         device: str = "auto",
         precision: str = "bfloat16",
+        backend: str = "auto",
         model: str = "",
         codec: str = "",
         lora_dir: str = "",
     ) -> tuple[Any]:
-        key = (device, precision, model.strip(), codec.strip(), lora_dir.strip())
+        key = (device, precision, backend, model.strip(), codec.strip(), lora_dir.strip())
         engine = _ENGINES.get(key)
         if engine is None:
             import torch
 
             from kova_tts import KovaTTS
+            from kova_tts.engine import backends
 
             _ENGINES.clear()
-            log.info("Loading Kova TTS (%s, %s)", device, precision)
+            resolved = backends.resolve(_clean(model), backend)
+            log.info("Loading Kova TTS (%s, %s, %s)", resolved, device, precision)
+            # device and precision describe the torch loop and have no counterpart in MLX;
+            # forwarding them there would only produce a warning per load.
+            hardware = (
+                {}
+                if resolved == "mlx"
+                else {
+                    "device": None if device == "auto" else device,
+                    "dtype": getattr(torch, precision),
+                }
+            )
             engine = KovaTTS.from_pretrained(
                 _clean(model),
                 codec=_clean(codec),
-                device=None if device == "auto" else device,
-                dtype=getattr(torch, precision),
+                backend=backend,
                 lora_root=_clean(lora_dir),
                 transcriber=_transcriber(),
+                **hardware,
             )
             _ENGINES[key] = engine
         return (engine,)

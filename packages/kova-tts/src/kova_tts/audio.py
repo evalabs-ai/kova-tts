@@ -5,9 +5,8 @@ One convention throughout: a waveform is a **1-D float32 numpy array, mono, nomi
 Anything crossing a module boundary is in that form, so nothing downstream has to guess about
 channel order or dtype.
 
-Reference audio fed to the codec must go through :func:`normalize_loudness` first: the training
-clips were LUFS-normalised to -23 with exactly this procedure before being tokenized, and
-cloning quality drops when the level does not match.
+Reference audio fed to the codec goes through :func:`normalize_loudness` first, so that clips
+recorded at different levels all reach it at -23 LUFS.
 
 **Rate conversion.** The model is native 32 kHz; voice-agent pipelines run at 16 kHz and
 telephony at 8 kHz. :func:`resample` converts a finished waveform; :class:`StreamingResampler`

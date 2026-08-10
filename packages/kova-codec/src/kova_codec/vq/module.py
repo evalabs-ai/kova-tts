@@ -6,6 +6,7 @@ The convolutional stack derives from BigCodec (https://github.com/Aria-K-Alethia
 from __future__ import annotations
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 from torch.nn.utils import weight_norm
 
@@ -20,7 +21,102 @@ def WNConv1d(*args, **kwargs) -> nn.Module:  # noqa: N802 - mirrors the upstream
 
 
 def WNConvTranspose1d(*args, **kwargs) -> nn.Module:  # noqa: N802
-    return weight_norm(nn.ConvTranspose1d(*args, **kwargs))
+    return weight_norm(ConvTranspose1d(*args, **kwargs))
+
+
+class ConvTranspose1d(nn.ConvTranspose1d):
+    """``nn.ConvTranspose1d`` that runs as a polyphase ``conv1d`` on Metal.
+
+    Same parameters, same shapes, same state dict -- only the kernel differs, and only on MPS,
+    where ``conv_transpose1d`` is roughly 2.4x slower than the equivalent forward convolution
+    at the decoder's shapes. This is the same trade the upsampler in ``alias_free_torch``
+    makes, and for the same reason: the transposed form spends most of its multiplications on
+    the zeros it inserts.
+
+    The identity, for stride ``S`` and kernel ``2S``. Output sample ``S*m + p`` is fed by
+    exactly two input samples, since only two of the ``2S`` taps land on the ``S``-spaced input
+    grid at any output phase::
+
+        q = p + padding,  r = q % S,  d = q // S
+        y[S*m + p] = x[m + d] @ W[:, :, r] + x[m + d - 1] @ W[:, :, r + S]
+
+    ``padding <= S`` bounds ``d`` to ``{0, 1}``, so both taps sit inside the 3-wide window
+    ``{m-1, m, m+1}`` and all ``S`` phases can be evaluated by a *single* ``conv1d`` with
+    ``S * out_channels`` output channels and 3 taps, one of which is zero in each phase.
+
+    The identity is exact in exact arithmetic. In floating point the two forms differ only in the
+    order the products are summed, which on Metal -- the only place this path runs -- came out
+    bit-identical at both float16 and float32 in testing; on the CPU the same comparison lands
+    around 1e-7, which is what ``test_polyphase_conv_transpose_matches_torch`` pins.
+    """
+
+    #: Derived weights and bias, and the ``weight.data_ptr()`` they were derived from. Any
+    #: ``.to()`` or ``.half()`` gives the parameter new storage and so a new pointer, which is
+    #: what makes this a sufficient key; folding weight norm does too.
+    _pp_weight: torch.Tensor | None = None
+    _pp_bias: torch.Tensor | None = None
+    _pp_from: int = 0
+
+    def _polyphase_weight(self) -> tuple[torch.Tensor, torch.Tensor | None]:
+        """``[C_in, C_out, 2S]`` folded to ``[S * C_out, C_in, 3]``, with a matching bias.
+
+        Both cached across calls. The bias is tiled rather than added afterwards: output channel
+        ``p * C_out + c`` carries phase ``p`` of channel ``c``, so ``bias.repeat(S)`` lines up
+        with that ordering and ``conv1d`` can fold it in. Adding it after the reshape instead
+        costs a second pass over the *upsampled* output, which is ``S`` times longer than what
+        the convolution just wrote.
+        """
+        weight = self.weight
+        if self._pp_weight is not None and self._pp_from == weight.data_ptr():
+            return self._pp_weight, self._pp_bias
+
+        c_in, c_out, _ = weight.shape
+        stride, pad = self.stride[0], self.padding[0]
+        pp = weight.new_zeros(stride, c_out, c_in, 3)
+        for p in range(stride):
+            q = p + pad
+            r, d = q % stride, q // stride
+            pp[p, :, :, 1 + d] = weight[:, :, r].t()  # tap on x[m + d]
+            pp[p, :, :, d] = weight[:, :, r + stride].t()  # tap on x[m + d - 1]
+        self._pp_weight = pp.reshape(stride * c_out, c_in, 3).contiguous()
+        self._pp_bias = None if self.bias is None else self.bias.repeat(stride).contiguous()
+        self._pp_from = weight.data_ptr()
+        return self._pp_weight, self._pp_bias
+
+    def _polyphase_ok(self) -> bool:
+        """Whether this layer's geometry matches the identity above.
+
+        ``weight`` must also be a plain ``Parameter``: while weight norm is still attached it is
+        recomputed each forward from ``weight_g``/``weight_v`` into a fresh tensor, so the cache
+        above would rebuild every call and could hand back a stale fold. Inference removes weight
+        norm up front, so the fast path is the live one.
+        """
+        stride, pad = self.stride[0], self.padding[0]
+        (kernel,) = self.kernel_size
+        (out_pad,) = self.output_padding
+        return (
+            isinstance(self.weight, nn.Parameter)
+            and self.groups == 1
+            and self.dilation[0] == 1
+            and kernel == 2 * stride
+            and pad <= stride
+            # Guarantees the cropped output is exactly S*T long, so the phases tile it evenly.
+            and kernel == 2 * pad + stride - out_pad
+        )
+
+    def forward(self, x: torch.Tensor, output_size: list[int] | None = None) -> torch.Tensor:
+        if x.device.type != "mps" or output_size is not None or not self._polyphase_ok():
+            return super().forward(x, output_size)
+
+        stride = self.stride[0]
+        c_out = self.out_channels
+        batch, _, frames = x.shape
+        weight, bias = self._polyphase_weight()
+        y = F.conv1d(x, weight, bias, padding=1)
+        # conv1d puts time on the fastest axis and phase on the slowest; interleaving them is
+        # what turns S separate phase signals back into one S-times-longer signal.
+        y = y.view(batch, stride, c_out, frames).permute(0, 2, 3, 1)
+        return y.reshape(batch, c_out, frames * stride)
 
 
 class ResidualUnit(nn.Module):

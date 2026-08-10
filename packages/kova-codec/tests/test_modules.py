@@ -156,3 +156,55 @@ def test_windowed_decoding_reproduces_a_single_decode(tiny_decoder: CodecDecoder
     # 12 frames of lookahead covers this stack's receptive field, so the match is exact to
     # within float32 noise (measured max |diff| ~2e-7 against a signal peaking at 0.17).
     torch.testing.assert_close(streamed, reference, rtol=0, atol=1e-5)
+
+
+# ------------------------------------------------------------------ polyphase transposed conv
+
+
+@pytest.mark.parametrize("stride", [2, 5])
+@pytest.mark.parametrize("bias", [True, False])
+def test_polyphase_conv_transpose_matches_torch(stride: int, bias: bool):
+    """The Metal fast path must be the same convolution, not merely a similar one.
+
+    ``ConvTranspose1d`` rewrites a stride-S transposed convolution as one 3-tap forward
+    convolution over S*C_out channels. The identity is exact in exact arithmetic; in floating
+    point the two differ only by the order the products are summed in, which on Metal comes out
+    bit-identical and on the CPU lands around 1e-7. The tolerance here is therefore loose enough
+    for summation order and far tighter than any real mistake -- a misordered polyphase bias or
+    a transposed tap would be wrong by order 0.1, not 1e-7.
+
+    Forced onto the CPU path directly, since CI has no Metal.
+    """
+    from kova_codec.vq.module import ConvTranspose1d
+
+    torch.manual_seed(stride)
+    layer = ConvTranspose1d(
+        6,
+        4,
+        kernel_size=2 * stride,
+        stride=stride,
+        padding=stride // 2 + stride % 2,
+        output_padding=stride % 2,
+        bias=bias,
+    ).eval()
+    assert layer._polyphase_ok(), "this geometry should qualify for the polyphase path"
+
+    x = torch.randn(2, 6, 7)
+    with torch.inference_mode():
+        reference = torch.nn.ConvTranspose1d.forward(layer, x)
+        weight, folded_bias = layer._polyphase_weight()
+        got = torch.nn.functional.conv1d(x, weight, folded_bias, padding=1)
+        got = got.view(2, stride, 4, 7).permute(0, 2, 3, 1).reshape(2, 4, 7 * stride)
+
+    assert got.shape == reference.shape == (2, 4, 7 * stride)
+    torch.testing.assert_close(got, reference, rtol=1e-4, atol=1e-6)
+
+
+def test_polyphase_declines_geometry_it_was_not_derived_for():
+    """A dilated or grouped transposed conv is not covered by the identity, so it must decline."""
+    from kova_codec.vq.module import ConvTranspose1d
+
+    assert not ConvTranspose1d(4, 4, kernel_size=4, stride=2, dilation=2)._polyphase_ok()
+    assert not ConvTranspose1d(4, 4, kernel_size=4, stride=2, groups=2)._polyphase_ok()
+    # kernel_size != 2 * stride: taps no longer land two-to-a-phase.
+    assert not ConvTranspose1d(4, 4, kernel_size=6, stride=2, padding=1)._polyphase_ok()

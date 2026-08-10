@@ -29,8 +29,8 @@ Three things about that order are load-bearing:
 
 - **Trim before normalise.** Leading silence drags a clip's integrated loudness down, and the
   gain applied would then be wrong.
-- **Normalise before encode.** The codec was trained on clips normalised to −23 LUFS with
-  exactly this procedure, and its semantic features are not level-invariant.
+- **Normalise before encode.** Every clip in the corpus should reach the codec at the same
+  level, whatever it was recorded at.
 - **Transcribe after segmenting.** A recording cut into six clips needs six transcripts, and
   there is no honest way to divide one transcript across the cuts.
 

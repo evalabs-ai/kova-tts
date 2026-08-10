@@ -206,8 +206,8 @@ frame.duration_seconds
 | `container_rate(fmt, sample_rate)` | The rate a format will actually be written at |
 | `streaming_wav_header(sample_rate)` | 44-byte RIFF header with placeholder sizes |
 
-`normalize_loudness` is not cosmetic: the training clips were normalised to −23 LUFS with
-exactly this procedure, and the codec's semantic features are not level-invariant. It leaves
+`normalize_loudness` puts every clip at the same level before it reaches the codec, which is why
+cloning applies it whatever you hand it. It leaves
 silent, unmeasurable and sub-400 ms clips alone rather than applying an infinite gain.
 
 `to_pcm_bytes` scales negative samples by 32768 and non-negative ones by 32767, because

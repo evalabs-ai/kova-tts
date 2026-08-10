@@ -23,7 +23,9 @@ from typing import Any
 
 from fastapi import FastAPI
 
+from kova_codec.constants import TOKEN_RATE
 from kova_tts import __version__
+from kova_tts.engine.backends import BACKENDS
 from kova_tts.server import errors, openai_api, routes, ws
 from kova_tts.server.engine import DEFAULT_BUSY_TIMEOUT, Engine
 
@@ -50,9 +52,11 @@ def create_app(
     model: str | os.PathLike[str] | None = None,
     codec: str | os.PathLike[str] | None = None,
     wavlm: str | os.PathLike[str] | None = None,
+    backend: str | None = None,
     device: str | None = None,
     lora_dir: str | os.PathLike[str] | None = None,
     clone_preroll: int | None = DEFAULT_CLONE_PREROLL,
+    decode_window: int | None = None,
     busy_timeout: float = DEFAULT_BUSY_TIMEOUT,
     warmup: bool = True,
     voice_aliases: dict[str, str] | list[str] | None = None,
@@ -61,14 +65,20 @@ def create_app(
 
     Args:
         tts: An already-loaded model. When given, nothing is loaded and `model`, `codec`,
-            `wavlm`, `device`, `lora_dir`, `clone_preroll` and `warmup` are all ignored -- this
-            is how the tests drive the endpoints against a stub.
+            `wavlm`, `backend`, `device`, `lora_dir`, `clone_preroll` and `warmup` are all
+            ignored -- this is how the tests drive the endpoints against a stub.
         model: LM directory or Hub repo id. ``None`` resolves through :mod:`kova_tts.paths`.
         codec: Codec checkpoint. ``None`` resolves through :mod:`kova_tts.paths`.
         wavlm: WavLM directory, needed only to encode reference audio.
-        device: Torch device for the model, e.g. ``"cuda"`` or ``"cuda:1"``.
+        backend: Decode loop -- ``"torch"``, ``"mlx"``, or ``None`` to read it off the
+            checkpoint. See :mod:`kova_tts.engine.backends`.
+        device: Torch device for the model, e.g. ``"cuda"``, ``"cuda:1"`` or ``"mps"``.
         lora_dir: Directory of LoRA voices, one subdirectory each.
         clone_preroll: Reference codes used to warm the codec before a cloned generation.
+        decode_window: Codec frames per streamed chunk, so also how far apart the chunks are.
+            ``None`` keeps the engine's default. Raising it trades latency for throughput and
+            is worth doing on Metal, where the per-call cost of the decoder stack is a large
+            fraction of a default window; see :class:`~kova_tts.engine.tts.KovaTTS`.
         busy_timeout: Seconds a second caller waits for the model before getting a 409.
         warmup: Synthesize one short sentence at startup. Worth it: it forces the codec load
             and the CUDA graph capture that the first real request would otherwise pay for.
@@ -97,9 +107,11 @@ def create_app(
                 model=model,
                 codec=codec,
                 wavlm=wavlm,
+                backend=backend,
                 device=device,
                 lora_dir=lora_dir,
                 clone_preroll=clone_preroll,
+                decode_window=decode_window,
             )
         )
         app.state.engine = Engine(loaded, busy_timeout=busy_timeout)
@@ -139,9 +151,11 @@ def _load(
     model: str | os.PathLike[str] | None,
     codec: str | os.PathLike[str] | None,
     wavlm: str | os.PathLike[str] | None,
+    backend: str | None,
     device: str | None,
     lora_dir: str | os.PathLike[str] | None,
     clone_preroll: int | None,
+    decode_window: int | None,
 ) -> Any:
     """Load the model. Imported here so ``import kova_tts.server`` costs no torch."""
     from kova_tts.engine.tts import KovaTTS
@@ -151,9 +165,14 @@ def _load(
         model,
         codec=codec,
         wavlm=wavlm,
+        backend=backend,
         device=device,
         lora_root=lora_dir,
         clone_preroll=clone_preroll,
+        # Omitted rather than passed as None: the engine owns the default, and restating it
+        # here would import the decoder -- and so torch -- into a module that is deliberately
+        # importable without either.
+        **({} if decode_window is None else {"decode_window": decode_window}),
     )
 
 
@@ -177,7 +196,13 @@ def add_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     group.add_argument("--model", default=None, help="LM directory or Hub repo id")
     group.add_argument("--codec", default=None, help="codec checkpoint")
     group.add_argument("--wavlm", default=None, help="WavLM-large directory or repo id")
-    group.add_argument("--device", default=None, help="torch device, e.g. cuda or cuda:1")
+    group.add_argument("--device", default=None, help="torch device, e.g. cuda, cuda:1 or mps")
+    group.add_argument(
+        "--backend",
+        default=None,
+        choices=BACKENDS,
+        help="decode loop; the default reads it off the checkpoint",
+    )
     group.add_argument("--lora-dir", default=None, help="directory of LoRA voices")
     group.add_argument(
         "--clone-preroll",
@@ -185,6 +210,20 @@ def add_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
         default=DEFAULT_CLONE_PREROLL,
         help=f"reference codes decoded to warm a cloned generation (default: "
         f"{DEFAULT_CLONE_PREROLL}, one second)",
+    )
+
+    # Imported here rather than at the top of the module: the decoder brings torch with it,
+    # and `import kova_tts.server.app` is meant to stay cheap. By the time a parser is being
+    # built for this command, the server is starting and torch is coming anyway.
+    from kova_tts.engine.decoder import WINDOW
+
+    group.add_argument(
+        "--decode-window",
+        type=int,
+        default=WINDOW,
+        help=f"codec frames per streamed chunk, and so how far apart the chunks are "
+        f"(default: {WINDOW}, {WINDOW / TOKEN_RATE * 1000:.0f} ms). Raising it trades latency "
+        f"for throughput, which is worth doing on Apple Silicon",
     )
 
     group = parser.add_argument_group("serving")
@@ -231,9 +270,11 @@ def run(args: argparse.Namespace) -> int:
         model=args.model,
         codec=args.codec,
         wavlm=args.wavlm,
+        backend=args.backend,
         device=args.device,
         lora_dir=args.lora_dir,
         clone_preroll=args.clone_preroll,
+        decode_window=args.decode_window,
         busy_timeout=args.busy_timeout,
         warmup=not args.no_warmup,
         voice_aliases=args.voice_alias,

@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Any
 
 from kova_tts import CLONE_SAMPLING, TTS_SAMPLING, __version__, paths
+from kova_tts.engine.backends import BACKENDS
 
 #: Files a Hub snapshot never needs: the same weights in frameworks this project does not use.
 HUB_IGNORE = ("*.h5", "*.msgpack", "*.onnx", "*.tflite")
@@ -317,6 +318,16 @@ def _cmd_paths(_args: argparse.Namespace) -> int:
 
     voices = paths.available_loras()
     print(f"voices    {', '.join(voices) if voices else 'none'}")
+    # Which decode loop that model resolves to. Reported here because the commonest way to be
+    # surprised by it is to point at an Apple-converted checkpoint on a machine without mlx,
+    # and this is the command whose job is to say what will happen before anything loads.
+    from kova_tts.engine import backends
+
+    try:
+        print(f"backend   {backends.resolve()}")
+    except (ImportError, ValueError, paths.MissingArtifact) as exc:
+        print(f"backend   ERROR: {exc}")
+        ok = False
     return 0 if ok else 1
 
 
@@ -336,6 +347,7 @@ def _cmd_generate(args: argparse.Namespace) -> int:
         args.model,
         codec=args.codec,
         wavlm=args.wavlm,
+        backend=args.backend,
         device=args.device,
         lora_root=args.lora_dir,
         transcriber=asr_transcriber(
@@ -607,7 +619,13 @@ def _add_generate(sub: argparse._SubParsersAction) -> None:
     group.add_argument("--codec", default=None, help="codec checkpoint")
     group.add_argument("--wavlm", default=None, help="WavLM directory or repo id (cloning only)")
     group.add_argument("--lora-dir", default=None, help="directory of LoRA voices")
-    group.add_argument("--device", default=None, help="torch device, e.g. cuda:1")
+    group.add_argument("--device", default=None, help="torch device, e.g. cuda:1 or mps")
+    group.add_argument(
+        "--backend",
+        default=None,
+        choices=BACKENDS,
+        help="decode loop; the default reads it off the checkpoint",
+    )
 
     group = parser.add_argument_group(
         "transcription", "used only when cloning without --clone-text"

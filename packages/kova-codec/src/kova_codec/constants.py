@@ -21,7 +21,7 @@ WAVLM_MODEL = "microsoft/wavlm-large"
 WAVLM_LAYER = 23
 WAVLM_SAMPLE_RATE = 16_000
 
-#: Reference loudness applied before encoding, matching the training data.
+#: Reference loudness applied before encoding, so every clip arrives at one level.
 TARGET_LUFS = -23.0
 
 

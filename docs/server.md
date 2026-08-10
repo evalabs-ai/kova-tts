@@ -43,9 +43,14 @@ curl -s http://127.0.0.1:8000/health
 ```
 
 ```json
-{"status":"ok","model_loaded":true,"device":"cuda","sample_rate":32000,
+{"status":"ok","model_loaded":true,"device":"cuda","backend":"torch","sample_rate":32000,
  "voices":1,"busy":false,"version":"0.1.0"}
 ```
+
+`backend` is which decode loop the LM runs on, `torch` or `mlx`. It is reported separately from
+the device because on Apple Silicon both backends say `mps` — the codec is torch on Metal either
+way — and the difference between them is a factor of four. See
+[Apple Silicon](apple-silicon.md).
 
 `model_loaded` is always true in a served response — loading happens in the application
 lifespan, so the server does not accept connections until it has finished. The field exists so a

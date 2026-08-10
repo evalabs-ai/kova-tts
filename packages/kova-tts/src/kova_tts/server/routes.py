@@ -68,6 +68,7 @@ async def health(request: Request) -> HealthResponse:
     return HealthResponse(
         model_loaded=True,
         device=engine.device,
+        backend=engine.backend,
         sample_rate=engine.sample_rate,
         voices=len(engine.voices()),
         busy=engine.busy,

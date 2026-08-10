@@ -44,6 +44,10 @@ known-local-folder = ["content", "session", "streaming", "ui"]
 testpaths = ["packages/kova-codec/tests", "packages/kova-tts/tests"]
 addopts = "-q"
 markers = [
+    # Kept as "CUDA" rather than widened to "an accelerator": these tests select a card, pin a
+    # subprocess to it, or compare against a CUDA-only code path, none of which mean anything
+    # on Metal. Tests that merely want a fast device do not carry the marker and run wherever
+    # `kova_codec.devices.default_device` points them.
     "gpu: requires a CUDA device",
     "weights: requires local or downloaded model weights",
 ]
