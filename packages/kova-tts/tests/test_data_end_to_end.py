@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from kova_codec.constants import HOP_LENGTH, SAMPLE_RATE, TOKEN_RATE
+from kova_codec.constants import SAMPLE_RATE, TOKEN_RATE
 from kova_tts import paths
 from kova_tts.data.discover import AUDIO_SUFFIXES, read_metadata
 from kova_tts.data.encode import encode_clips, load_codec
@@ -179,9 +179,9 @@ def test_codes_decode_back_to_audio_of_the_same_length(source, tmp_path, codec):
     codes = parse_audio_tokens(row["text"])
 
     audio = codec.decode(codes).float().cpu().numpy()
-    assert audio.size == len(codes) * HOP_LENGTH
+    assert audio.size == len(codes) * codec.hop_length
     assert float(np.max(np.abs(audio))) > 0.01, "decoded clip is silent"
-    assert audio.size / SAMPLE_RATE == pytest.approx(row["seconds"], abs=0.05)
+    assert audio.size / codec.sample_rate == pytest.approx(row["seconds"], abs=0.05)
 
 
 def test_rerunning_over_the_same_folder_encodes_nothing_new(source, tmp_path, codec):

@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 import torch
 
-from kova_codec.constants import HOP_LENGTH, SAMPLE_RATE, TOKEN_RATE
+from kova_codec.constants import HOP_LENGTH, OUTPUT_SAMPLE_RATE, SAMPLE_RATE, TOKEN_RATE
 from kova_tts import audio as audio_io
 from kova_tts import prompt as prompt_module
 from kova_tts import tokens as tokens_module
@@ -297,11 +297,11 @@ class TestReferenceTrim:
         assert clone_voice.ref_seconds == pytest.approx(160 / TOKEN_RATE)
 
     def test_trimming_drops_exactly_the_reference(self, clone_voice):
-        total = 5 * SAMPLE_RATE
+        total = 5 * OUTPUT_SAMPLE_RATE
         wav = np.arange(total, dtype=np.float32)
         trimmed = audio_io.trim_leading(wav, clone_voice.ref_seconds)
-        assert trimmed.size == total - int(clone_voice.ref_seconds * SAMPLE_RATE)
-        assert trimmed[0] == int(clone_voice.ref_seconds * SAMPLE_RATE)
+        assert trimmed.size == total - int(clone_voice.ref_seconds * OUTPUT_SAMPLE_RATE)
+        assert trimmed[0] == int(clone_voice.ref_seconds * OUTPUT_SAMPLE_RATE)
 
     def test_the_whole_reference_is_the_default_preroll(self, facade, clone_voice):
         assert facade._preroll(clone_voice) == clone_voice.ref_codes
@@ -353,6 +353,10 @@ class TestOutputSampleRate:
     def streamed(self, tts: KovaTTS, **kwargs) -> tuple[np.ndarray, list]:
         frames = list(tts.stream(self.TEXT, **kwargs))
         return np.concatenate([f.samples for f in frames]), frames
+
+    def test_the_model_rate_is_the_codecs(self):
+        """The decoder checkpoint decides the output rate; nothing here assumes one."""
+        assert self.facade().sample_rate == SineCodec.sample_rate
 
     def test_the_default_is_the_model_rate(self):
         assert (
@@ -449,9 +453,36 @@ class TestCloneErrors:
         facade = KovaTTS(StubGenerator(), transcriber=lambda path: "Transcribed text.")
         facade._encoding_codec = FakeCodec()
         wav = (0.3 * np.sin(np.arange(3 * SAMPLE_RATE) / 50)).astype(np.float32)
-        path = audio_io.save_wav(tmp_path / "ref.wav", wav)
+        path = audio_io.save_wav(tmp_path / "ref.wav", wav, SAMPLE_RATE)
         voice = facade.clone(path)
         assert voice.ref_text == "Transcribed text." and calls
+
+    def test_a_clip_reaches_the_encoder_at_its_rate_not_the_output_rate(self, tmp_path):
+        """The decoder speaks at 48 kHz, the encoder only ever takes 32 kHz, and a file recorded
+        at either rate has to arrive at the encoder as 32 kHz."""
+        seen = []
+
+        class FakeCodec:
+            device = torch.device("cpu")
+
+            def encode(self, wav):
+                seen.append(np.asarray(wav).size)
+                return torch.arange(240, dtype=torch.long)
+
+        class SpeaksAt48k:
+            device = torch.device("cpu")
+            sample_rate = OUTPUT_SAMPLE_RATE
+
+        facade = KovaTTS(StubGenerator(), codec=SpeaksAt48k())
+        facade._encoding_codec = FakeCodec()
+        assert facade.sample_rate != SAMPLE_RATE
+        wav = (0.3 * np.sin(np.arange(3 * OUTPUT_SAMPLE_RATE) / 50)).astype(np.float32)
+        path = audio_io.save_wav(tmp_path / "ref.wav", wav, OUTPUT_SAMPLE_RATE)
+        facade.clone(path, "Some words.")
+        # The model's own output, handed back as a waveform with its rate named.
+        facade.clone(wav, "Some words.", sample_rate=facade.sample_rate)
+        assert len(seen) == 2
+        assert all(abs(size - 3 * SAMPLE_RATE) <= 2 for size in seen)
 
 
 # ------------------------------------------------------------------------------- end to end
@@ -471,7 +502,9 @@ def tts(cuda_device, local_artifact) -> KovaTTS:
 def test_a_sentence_becomes_real_audio(tts):
     wav = tts.generate("The quick brown fox jumps over the lazy dog.", seed=7)
     assert wav.dtype == np.float32 and wav.ndim == 1
-    assert wav.size / SAMPLE_RATE > 0.5, "less than half a second of speech for a whole sentence"
+    assert wav.size / tts.sample_rate > 0.5, (
+        "less than half a second of speech for a whole sentence"
+    )
     peak = float(np.abs(wav).max())
     assert 0.02 < peak <= 1.0, f"peak {peak} is silence or clipping, not speech"
     # Speech has a syllable-rate envelope; a constant hum or noise floor does not.
@@ -487,7 +520,7 @@ def test_streaming_yields_the_same_audio_as_generating(tts):
     whole = tts.generate(text, seed=99)
     frames = list(tts.stream(text, seed=99))
     assert frames[-1].is_final
-    assert all(f.sample_rate == SAMPLE_RATE for f in frames)
+    assert all(f.sample_rate == OUTPUT_SAMPLE_RATE for f in frames)
     streamed = np.concatenate([f.samples for f in frames])
     assert streamed.size == whole.size
     np.testing.assert_allclose(streamed, whole, rtol=0, atol=1e-2)
@@ -522,16 +555,16 @@ def test_a_clone_does_not_begin_with_its_reference(tts, local_artifact):
     assert voice.is_clone and voice.ref_seconds > 0.5
 
     wav = tts.generate("The quick brown fox jumps over the lazy dog.", voice=voice, seed=5)
-    assert wav.size / SAMPLE_RATE > 0.5
+    assert wav.size / tts.sample_rate > 0.5
 
-    original = audio_io.load_audio(reference)
-    n = min(int(voice.ref_seconds * SAMPLE_RATE), wav.size, original.size)
+    original = audio_io.load_audio(reference, tts.sample_rate)
+    n = min(int(voice.ref_seconds * tts.sample_rate), wav.size, original.size)
     head, start = wav[:n], original[:n]
     correlation = float(
         np.dot(head - head.mean(), start - start.mean())
         / (np.linalg.norm(head - head.mean()) * np.linalg.norm(start - start.mean()) + 1e-9)
     )
     assert abs(correlation) < 0.2, (
-        f"the first {n / SAMPLE_RATE:.1f}s of output correlates {correlation:.2f} with the "
+        f"the first {n / tts.sample_rate:.1f}s of output correlates {correlation:.2f} with the "
         f"reference clip -- Voice.ref_seconds was not trimmed"
     )

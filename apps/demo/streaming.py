@@ -19,7 +19,7 @@ from contextlib import aclosing
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 
-from kova_codec.constants import SAMPLE_RATE
+from kova_codec.constants import OUTPUT_SAMPLE_RATE
 from kova_tts import audio as audio_io
 from kova_tts.server import errors as server_errors
 from kova_tts.server.engine import aiter_frames
@@ -93,7 +93,7 @@ def add_stream_route(app: FastAPI, session: DemoSession, *, path: str = STREAM_P
         async def events() -> AsyncIterator[bytes]:
             index = 0
             samples = 0
-            rate = SAMPLE_RATE
+            rate = OUTPUT_SAMPLE_RATE
             try:
                 # aclosing, because a listener who presses Stop or reloads the page closes
                 # *this* generator, and only an explicit aclose passes that on to the model's

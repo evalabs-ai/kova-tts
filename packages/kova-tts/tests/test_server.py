@@ -9,7 +9,7 @@ return a tone whose length is a known function of the text, so a test can assert
 of the audio that comes back rather than merely that some bytes arrived. Underneath them sit a
 stand-in LM and a stand-in codec, which is what the WebSocket session drives: the LM hands out
 code numbers that count up over the life of the stub, and the codec decodes code ``c`` to the
-tone that begins at sample ``c * HOP_LENGTH``. A run of generations therefore decodes to one
+tone that begins at sample ``c * OUTPUT_HOP_LENGTH``. A run of generations therefore decodes to one
 continuous waveform, which is what makes a discontinuity in a session's audio provably the
 session's doing and not the stand-in's.
 
@@ -39,7 +39,13 @@ import soundfile as sf
 import torch
 from fastapi.testclient import TestClient
 
-from kova_codec.constants import HOP_LENGTH, SAMPLE_RATE, TOKEN_RATE
+from kova_codec.constants import (
+    HOP_LENGTH,
+    OUTPUT_HOP_LENGTH,
+    OUTPUT_SAMPLE_RATE,
+    SAMPLE_RATE,
+    TOKEN_RATE,
+)
 from kova_tts import audio, paths
 from kova_tts.engine.decoder import decode_all
 from kova_tts.engine.generator import DEFAULT_MAX_CACHE_LEN
@@ -61,8 +67,8 @@ from kova_tts.server.engine import Engine, aiter_frames
 CODES_PER_CHAR = 5
 
 #: Samples of tone per character, which is the same number seen from the other end: one code is
-#: ``HOP_LENGTH`` samples, so the two faces of the stub agree on how long a text sounds.
-SAMPLES_PER_CHAR = CODES_PER_CHAR * HOP_LENGTH
+#: ``OUTPUT_HOP_LENGTH`` samples, so the two faces of the stub agree on how long a text sounds.
+SAMPLES_PER_CHAR = CODES_PER_CHAR * OUTPUT_HOP_LENGTH
 
 #: Whitespace, which the stub does not speak. Leaving it out is what makes the rate additive
 #: across a join: the prompt layer puts a space between the text a prompt carries and the text
@@ -77,11 +83,11 @@ def speech_codes(text: str) -> int:
 
 def speech_samples(text: str) -> int:
     """Samples the stub renders `text` as, from either of its two faces."""
-    return speech_codes(text) * HOP_LENGTH
+    return speech_codes(text) * OUTPUT_HOP_LENGTH
 
 
 #: What the stub cuts its output into, matching the real decoder's steady-state window.
-FRAME_SAMPLES = 12400  # 31 codes at 80 Hz -> 387.5 ms at 32 kHz
+FRAME_SAMPLES = 31 * OUTPUT_HOP_LENGTH  # 31 codes at 80 Hz -> 387.5 ms
 
 #: The tone both faces of the stub produce. Quiet, so a decoded wav is checkable as a real
 #: signal and not silence, and low enough that consecutive samples differ by very little --
@@ -101,7 +107,7 @@ COLD_START_GAIN = 0.5
 
 
 class StubCodec:
-    """Decodes code `c` to the ``HOP_LENGTH`` samples of a tone beginning at sample ``c * HOP``.
+    """Decodes code `c` to the ``OUTPUT_HOP_LENGTH`` samples of a tone starting at ``c * HOP``.
 
     Position-aware, so consecutive codes decode to one continuous waveform however they are cut
     into windows, spread over chunks, or split across flushes -- and cold at the head of a decode
@@ -109,15 +115,15 @@ class StubCodec:
     """
 
     device = torch.device("cpu")
-    sample_rate = SAMPLE_RATE
+    sample_rate = OUTPUT_SAMPLE_RATE
 
     @staticmethod
     def _tone(codes: torch.Tensor) -> torch.Tensor:
         # The phase is accumulated in double and only then narrowed: several seconds in, a
         # float32 argument to sine has drifted far enough to show up against the 16-bit
         # quantisation the tests compare through.
-        offsets = (codes[..., None] * HOP_LENGTH + torch.arange(HOP_LENGTH)).double()
-        tone = TONE_AMPLITUDE * torch.sin(2 * np.pi * TONE_HZ * offsets / SAMPLE_RATE)
+        offsets = (codes[..., None] * OUTPUT_HOP_LENGTH + torch.arange(OUTPUT_HOP_LENGTH)).double()
+        tone = TONE_AMPLITUDE * torch.sin(2 * np.pi * TONE_HZ * offsets / OUTPUT_SAMPLE_RATE)
         return tone.flatten(-2).float()
 
     @staticmethod
@@ -230,7 +236,7 @@ class StubTTS:
         self.generator = StubGenerator(self)
         self.codec = StubCodec()
         self.encoding_codec = StubEncoder()
-        self.sample_rate = SAMPLE_RATE
+        self.sample_rate = OUTPUT_SAMPLE_RATE
         self.lora_root = None
         self.transcriber = None
         self.clone_preroll = ws_module.PREROLL_CODES
@@ -272,9 +278,9 @@ class StubTTS:
         if self._fail is not None:
             raise self._fail
         for start in range(0, wav.size, FRAME_SAMPLES):
-            yield AudioFrame(wav[start : start + FRAME_SAMPLES], SAMPLE_RATE)
+            yield AudioFrame(wav[start : start + FRAME_SAMPLES], OUTPUT_SAMPLE_RATE)
         # The real stream always ends with a final frame, empty or not.
-        yield AudioFrame(np.zeros(0, dtype=np.float32), SAMPLE_RATE, is_final=True)
+        yield AudioFrame(np.zeros(0, dtype=np.float32), OUTPUT_SAMPLE_RATE, is_final=True)
 
     def _record(self, text, voice, params, seed) -> None:
         if voice is not None:
@@ -323,7 +329,7 @@ def _tone(samples: int) -> np.ndarray:
     Cold at the head, exactly as :class:`StubCodec` is: this is the same audio seen from the
     other end, and the two have to agree sample for sample.
     """
-    t = np.arange(samples, dtype=np.float64) / SAMPLE_RATE
+    t = np.arange(samples, dtype=np.float64) / OUTPUT_SAMPLE_RATE
     wav = (TONE_AMPLITUDE * np.sin(2 * np.pi * TONE_HZ * t)).astype(np.float32)
     wav[:COLD_START_SAMPLES] *= COLD_START_GAIN
     return wav
@@ -370,7 +376,7 @@ class TestHealth:
         assert body["status"] == "ok"
         assert body["model_loaded"] is True
         assert body["device"] == "cpu"
-        assert body["sample_rate"] == SAMPLE_RATE
+        assert body["sample_rate"] == OUTPUT_SAMPLE_RATE
         assert body["voices"] == 2
         assert body["busy"] is False
 
@@ -416,7 +422,7 @@ class TestSynthesis:
         assert response.headers["content-type"] == "audio/wav"
 
         audio, rate = sf.read(io.BytesIO(response.content), dtype="float32")
-        assert rate == SAMPLE_RATE
+        assert rate == OUTPUT_SAMPLE_RATE
         assert audio.ndim == 1
         assert audio.size == speech_samples(text)
         # A real signal, not a buffer of zeros.
@@ -425,8 +431,8 @@ class TestSynthesis:
     def test_reports_the_duration_in_a_header(self, client):
         text = "Hello there, this is a test."
         response = client.post("/v1/tts", json={"text": text})
-        expected = speech_samples(text) / SAMPLE_RATE
-        assert response.headers["x-sample-rate"] == str(SAMPLE_RATE)
+        expected = speech_samples(text) / OUTPUT_SAMPLE_RATE
+        assert response.headers["x-sample-rate"] == str(OUTPUT_SAMPLE_RATE)
         assert float(response.headers["x-duration-seconds"]) == pytest.approx(expected, abs=1e-3)
 
     def test_raw_pcm_when_asked_for(self, client):
@@ -443,7 +449,7 @@ class TestSynthesis:
         pcm = client.post("/v1/tts", json={"text": text, "response_format": "pcm"}).content
 
         inside, rate = sf.read(io.BytesIO(wav), dtype="float32")
-        assert rate == SAMPLE_RATE
+        assert rate == OUTPUT_SAMPLE_RATE
         # Compared as floats, not bytes: soundfile scales to 16-bit against 32768 and rounds,
         # kova_tts.audio.to_pcm_bytes scales against 32767 and truncates, so the two encodings
         # of the same waveform differ in the bottom bit or two and never byte for byte.
@@ -537,7 +543,7 @@ class TestServerSentEvents:
         )
         chunks = [data for name, data in events if name == "chunk"]
         assert [c["index"] for c in chunks] == list(range(len(chunks)))
-        assert {c["sample_rate"] for c in chunks} == {SAMPLE_RATE}
+        assert {c["sample_rate"] for c in chunks} == {OUTPUT_SAMPLE_RATE}
 
     def test_the_concatenated_chunks_are_the_whole_utterance(self, client):
         text = "The stream and the file have to agree, sample for sample."
@@ -555,7 +561,9 @@ class TestServerSentEvents:
         done = events[-1][1]
         assert done["chunks"] == len(chunks)
         assert done["samples"] == speech_samples(text)
-        assert done["duration_seconds"] == pytest.approx(done["samples"] / SAMPLE_RATE, abs=1e-3)
+        assert done["duration_seconds"] == pytest.approx(
+            done["samples"] / OUTPUT_SAMPLE_RATE, abs=1e-3
+        )
 
     def test_empty_final_frames_are_not_sent_as_chunks(self, client):
         events = _sse_events(client.post("/v1/tts/stream", json={"text": "Short."}).content)
@@ -837,7 +845,10 @@ class TestWebSocketSession:
             started = ws.receive_json()["context_started"]
             assert started["voice"] == "some-voice"
             assert started["seed"] == 3
-            assert started["response_format"] == {"encoding": "pcm", "sample_rate": SAMPLE_RATE}
+            assert started["response_format"] == {
+                "encoding": "pcm",
+                "sample_rate": OUTPUT_SAMPLE_RATE,
+            }
             ws.send_json({"close_context": True, "flush_id": "x"})
 
     def test_the_configuration_reaches_the_model(self, client, tts):
@@ -974,7 +985,7 @@ class TestWebSocketFormats:
     def test_a_rate_other_than_the_codec_s_is_delivered(self, client, rate):
         _, payload, _ = run_session(client, [FLUSH_TEXTS[0]], response_format={"sample_rate": rate})
         native = speech_samples(FLUSH_TEXTS[0])
-        assert read_stream(payload).size == -(-native * rate // SAMPLE_RATE)
+        assert read_stream(payload).size == -(-native * rate // OUTPUT_SAMPLE_RATE)
 
     def test_a_container_states_the_rate_it_was_asked_for(self, client):
         started, payload, _ = run_session(
@@ -1031,12 +1042,12 @@ class TestWebSocketContinuity:
         flush on its own gives the right length and a step at every join."""
         _, payload, _ = run_session(client, FLUSH_TEXTS, response_format={"sample_rate": rate})
         codes = list(range(tts.generator.emitted))
-        whole = audio.resample(decode_all(tts.codec, codes), SAMPLE_RATE, rate)
+        whole = audio.resample(decode_all(tts.codec, codes), OUTPUT_SAMPLE_RATE, rate)
         streamed = read_stream(payload)
         assert streamed.size == whole.size
         assert np.allclose(streamed, whole, atol=1e-4)
 
-    @pytest.mark.parametrize("rate", [SAMPLE_RATE, 16_000, 8_000])
+    @pytest.mark.parametrize("rate", [OUTPUT_SAMPLE_RATE, 16_000, 8_000])
     def test_the_flush_joins_carry_no_step(self, client, rate):
         _, payload, boundaries = run_session(
             client, FLUSH_TEXTS, response_format={"sample_rate": rate}
@@ -1631,8 +1642,8 @@ class TestEngineInternals:
 
         def frames():
             try:
-                yield AudioFrame(_tone(10), SAMPLE_RATE)
-                yield AudioFrame(_tone(10), SAMPLE_RATE)
+                yield AudioFrame(_tone(10), OUTPUT_SAMPLE_RATE)
+                yield AudioFrame(_tone(10), OUTPUT_SAMPLE_RATE)
             finally:
                 closed.append(True)
 

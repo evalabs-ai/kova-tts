@@ -336,7 +336,7 @@ class Session:
         # first, which no decoder reads as one stream. Its tail goes out at close_context.
         self.encoder = formats.stream_encoder(
             start.response_format.encoding,
-            start.response_format.sample_rate,
+            start.response_format.sample_rate or engine.sample_rate,
             engine.sample_rate,
         )
         # Taken from the encoder rather than from the request, because the encoder is what

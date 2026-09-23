@@ -766,7 +766,7 @@ class TestRealGeneration:
         assert code == 0
 
         wav, rate = sf.read(str(out), dtype="float32")
-        assert rate == 32_000
+        assert rate == 48_000
         # Roughly a syllable every 200 ms: anything far outside that is a broken generation,
         # not a slow reader.
         assert 2.0 < wav.size / rate < 20.0

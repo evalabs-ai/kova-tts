@@ -43,7 +43,7 @@ curl -s http://127.0.0.1:8000/health
 ```
 
 ```json
-{"status":"ok","model_loaded":true,"device":"cuda","backend":"torch","sample_rate":32000,
+{"status":"ok","model_loaded":true,"device":"cuda","backend":"torch","sample_rate":48000,
  "voices":1,"busy":false,"version":"0.1.0"}
 ```
 
@@ -90,7 +90,7 @@ Request body:
 
 Response headers carry `X-Sample-Rate` and `X-Duration-Seconds`. `wav` comes back as `audio/wav`
 with a `Content-Disposition` filename; `pcm` comes back as `audio/pcm` — headerless 16-bit
-little-endian mono at 32 kHz.
+little-endian mono at 48 kHz.
 
 ```bash
 curl -sD - -o out.pcm -X POST http://127.0.0.1:8000/v1/tts \
@@ -99,7 +99,7 @@ curl -sD - -o out.pcm -X POST http://127.0.0.1:8000/v1/tts \
 ```
 
 ```
-x-sample-rate: 32000
+x-sample-rate: 48000
 x-duration-seconds: 2.237
 content-type: audio/pcm
 ```
@@ -127,10 +127,10 @@ failure.
 
 ```
 event: chunk
-data: {"index": 0, "audio": "<base64>", "sample_rate": 32000}
+data: {"index": 0, "audio": "<base64>", "sample_rate": 48000}
 
 event: done
-data: {"chunks": 6, "samples": 82560, "duration_seconds": 2.58, "sample_rate": 32000}
+data: {"chunks": 6, "samples": 123840, "duration_seconds": 2.58, "sample_rate": 48000}
 ```
 
 `audio` is base64 of raw 16-bit little-endian mono PCM. Concatenating every chunk's decoded
@@ -325,7 +325,7 @@ recording and for what goes wrong when one is unsuitable.
 | `flac` | | Streamed form states "length unknown", which the format allows |
 | `opus` | refused | Its Ogg pages only leave once they are full — about a second of speech — so a flush's last words would still be inside the encoder when its `flush_completed` went out. Ask `POST /v1/audio/speech` for opus |
 
-`sample_rate` is anything from 8000 to 48000 and defaults to the model's own 32000, so a client
+`sample_rate` is anything from 8000 to 48000 and defaults to the model's own 48000, so a client
 that sends no `response_format` is unaffected. **Realtime voice pipelines run at 16 kHz**, and
 asking for it here is better than resampling the output yourself: the conversion uses the same
 windowed-sinc filter every other path in this project uses, and its state crosses chunk joins and
@@ -364,11 +364,11 @@ uv run python examples/stream_ws.py "For a voice agent." --rate 16000 --out agen
 ```
 
 ```
-context started: {'response_format': {'encoding': 'pcm', 'sample_rate': 32000}}
+context started: {'response_format': {'encoding': 'pcm', 'sample_rate': 48000}}
 first audio after 265 ms
-flush s0 done, 73600 bytes so far
-flush s1 done, 208800 bytes so far
-wrote ws.wav: 3.26 s at 32000 Hz
+flush s0 done, 110400 bytes so far
+flush s1 done, 313200 bytes so far
+wrote ws.wav: 3.26 s at 48000 Hz
 ```
 
 ## OpenAI-compatible API
@@ -416,7 +416,7 @@ what those clients read. There is no authentication, so the API key is ignored; 
 | `speed` | optional | Only `1.0`. Anything else is a `422` — [why](#speed-and-instructions) |
 | `instructions` | optional | Only empty. Anything else is a `422` — [why](#speed-and-instructions) |
 | `stream_format` | optional | `"audio"` (default) or `"sse"` — [OpenAI's audio events](#stream_format-sse) |
-| `sample_rate` | optional | **Extension.** Output rate; default is the model's 32 kHz |
+| `sample_rate` | optional | **Extension.** Output rate; default is the model's 48 kHz |
 | `stream` | optional | **Extension.** `false` for a file with exact headers instead of a stream |
 
 Unknown fields are **ignored** rather than rejected, which is the opposite of `/v1/tts`. OpenAI
@@ -559,13 +559,14 @@ curl -s http://127.0.0.1:8000/v1/audio/speech \
      -o speech.wav
 ```
 
-Absent, the response carries the model's own 32 kHz, so a stock OpenAI client is unaffected.
+Absent, the response carries the model's own 48 kHz, so a stock OpenAI client is unaffected.
 MP3 and Opus are each defined for a fixed set of rates and anything else is snapped *up* to the
-nearest one they accept — Opus has no 32 kHz mode, so `opus` is always carried at 48 kHz.
+nearest one they accept — Opus has no 32 kHz mode, so asking for `opus` at 32000 is carried at
+48 kHz.
 `X-Sample-Rate` always reports the rate the bytes are really at.
 
 That matters most for `pcm`, which has no header to state it. **OpenAI documents `pcm` as
-24 kHz**; this server sends the model's 32 kHz unless you ask otherwise, so a client that assumes
+24 kHz**; this server sends the model's 48 kHz unless you ask otherwise, so a client that assumes
 the documented rate should say so:
 
 ```json

@@ -1,19 +1,19 @@
 # kova-codec
 
 The neural audio codec behind [Kova TTS](../kova-tts): it converts 32 kHz waveforms to a single
-stream of discrete codes at 80 tokens/second, and back.
+stream of discrete codes at 80 tokens/second, and those codes back to 48 kHz waveforms.
 
 - **Encode** takes a waveform, fuses WavLM-large layer-23 semantic features with acoustic
   features, and quantizes to one codebook of 8192 entries.
-- **Decode** takes codes and reconstructs the waveform. Decoding does **not** need WavLM, so
-  text-to-speech only pays for the decoder.
+- **Decode** takes codes and reconstructs the waveform at `codec.sample_rate`, 600 samples per
+  code. Decoding does **not** need WavLM, so text-to-speech only pays for the decoder.
 
 ```python
 from kova_codec import KovaCodec
 
 codec = KovaCodec.from_checkpoint("codec.pt", device="cuda")
-codes = codec.encode(wav)      # [T * 80 / 32000]
-wav = codec.decode(codes)
+codes = codec.encode(wav)      # 32 kHz in: [T * 80 / 32000]
+wav = codec.decode(codes)      # 48 kHz out: [len(codes) * 600]
 ```
 
 A decode-only codec skips WavLM entirely — faster to start and about 1.2 GB lighter, which is
@@ -22,6 +22,12 @@ what a TTS process wants:
 ```python
 codec = KovaCodec.from_checkpoint("codec.pt", device="cuda", decode_only=True)
 ```
+
+The decoder checkpoint decides the output rate, and `codec.sample_rate` and `codec.hop_length`
+report it: 48000 and 600 for the shipped decoder, 32000 and 400 for the older one. Both sit on the
+same 80 codes/second grid and share the encoder and codebook, so either decodes the same codes.
+Always write or play decoded audio at `codec.sample_rate`. Encoding takes 32 kHz regardless
+(`kova_codec.SAMPLE_RATE`); `kova_codec.OUTPUT_SAMPLE_RATE` names the shipped decoder's rate.
 
 ## Streaming
 

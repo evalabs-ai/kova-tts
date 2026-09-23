@@ -216,7 +216,7 @@ async def create_speech(body: SpeechRequest, request: Request) -> Response:
     """Synthesize ``input`` and return it as audio bytes, OpenAI-style."""
     engine = _engine(request)
     fmt = formats.resolve(body.response_format)
-    rate = formats.output_rate(fmt, body.sample_rate)
+    rate = formats.output_rate(fmt, body.sample_rate, engine.sample_rate)
     # The encoder is built here rather than inside the response body, and the voice is resolved
     # before the model is reserved: anything either objects to should be a status code, and
     # once a streaming response has started 200 has already been sent.

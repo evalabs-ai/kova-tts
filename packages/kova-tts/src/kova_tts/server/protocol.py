@@ -10,7 +10,7 @@ WebSocket frames are a union discriminated by key: each frame is a JSON object w
 what it is (``{"send_text": "..."}``), which reads well in a log and needs no version field. One
 connection drives one stream, so no frame carries a session or request id.
 
-``POST /v1/tts/stream`` sends **raw 16-bit little-endian PCM, mono, at 32 kHz**, the codec's own
+``POST /v1/tts/stream`` sends **raw 16-bit little-endian PCM, mono, at 48 kHz**, the codec's own
 output rate, base64-encoded in each event. The WebSocket session chooses: its
 :class:`ResponseFormat` names a container and a rate, and the session says in
 ``context_started`` which ones it settled on.
@@ -22,7 +22,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from kova_codec.constants import SAMPLE_RATE
+from kova_codec.constants import OUTPUT_SAMPLE_RATE
 from kova_tts.audio import STREAMING_FORMATS, content_type
 from kova_tts.engine.types import SamplingParams
 
@@ -95,11 +95,11 @@ class ResponseFormat(_WireModel):
         description="Container for the audio_chunk payloads. pcm is headerless 16-bit "
         "little-endian samples; the rest are files, streamed from their first byte.",
     )
-    sample_rate: int = Field(
-        default=SAMPLE_RATE,
+    sample_rate: int | None = Field(
+        default=None,
         ge=MIN_OUTPUT_RATE,
         le=MAX_OUTPUT_RATE,
-        description="Rate to deliver at; the codec's own 32000 by default. Another rate is "
+        description="Rate to deliver at; absent means the codec's own, 48000. Another rate is "
         "converted with one filter whose state runs through the whole session, so no chunk "
         "join and no flush boundary carries a step.",
     )
@@ -220,7 +220,7 @@ class SpeechRequest(BaseModel):
         ge=MIN_OUTPUT_RATE,
         le=MAX_OUTPUT_RATE,
         description="Not part of OpenAI's schema: an extension for pipelines fixed at another "
-        "rate (16 kHz agents, 8 kHz telephony). Absent means the model's own 32 kHz. Streams "
+        "rate (16 kHz agents, 8 kHz telephony). Absent means the model's own 48 kHz. Streams "
         "like any other response; the resampler carries its filter state across frames.",
     )
     stream: bool = Field(
@@ -350,7 +350,7 @@ class ChunkEvent(BaseModel):
 
     index: int
     audio: str  # base64 of 16-bit little-endian PCM
-    sample_rate: int = SAMPLE_RATE
+    sample_rate: int = OUTPUT_SAMPLE_RATE
 
 
 class DoneEvent(BaseModel):
@@ -359,7 +359,7 @@ class DoneEvent(BaseModel):
     chunks: int
     samples: int
     duration_seconds: float
-    sample_rate: int = SAMPLE_RATE
+    sample_rate: int = OUTPUT_SAMPLE_RATE
 
 
 class ErrorEvent(BaseModel):
@@ -402,7 +402,8 @@ class VoiceReference(_WireModel):
     audio: str | None = Field(
         default=None,
         description="Base64 of an audio file -- anything soundfile reads. Resampled to mono "
-        "32 kHz and loudness-normalised here, so send the recording as you have it.",
+        "32 kHz for the encoder and loudness-normalised here, so send the recording as you "
+        "have it.",
     )
     codes: list[int] | None = Field(
         default=None,

@@ -35,7 +35,7 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
-from kova_codec.constants import HOP_LENGTH, SAMPLE_RATE
+from kova_codec.constants import OUTPUT_HOP_LENGTH, OUTPUT_SAMPLE_RATE, TOKEN_RATE
 
 #: Codes of real context fed to each end of a window to fill the first convolution's receptive
 #: field. The codec trims exactly these frames back off after the convolution.
@@ -88,6 +88,7 @@ def plan_window(
     window: int = WINDOW,
     lookahead: int = LOOKAHEAD,
     conv_padding: int = CONV_PADDING,
+    hop_length: int = OUTPUT_HOP_LENGTH,
 ) -> DecodeWindow | None:
     """The next window to decode, or ``None`` if more codes are needed first.
 
@@ -96,6 +97,7 @@ def plan_window(
         available: How many real codes have been produced so far.
         finished: Whether `available` is the final count. Only a finished stream can produce
             the last window, which is the one that emits its lookahead region.
+        hop_length: Samples the codec decodes per code, which the emit offsets are counted in.
 
     Pure arithmetic -- no codec, no torch -- so the window layout can be tested on its own.
     """
@@ -121,7 +123,7 @@ def plan_window(
         if not finished and position + width - conv_padding > available:
             return None
         stop = min(position + width, padded_len)
-        emit_stop: int | None = (lookahead + window) * HOP_LENGTH
+        emit_stop: int | None = (lookahead + window) * hop_length
         trimmed = stop - position - 2 * conv_padding
         if trimmed <= window:
             raise AssertionError(
@@ -131,7 +133,7 @@ def plan_window(
         return DecodeWindow(
             start=position,
             stop=stop,
-            emit_start=0 if position == 0 else lookahead * HOP_LENGTH,
+            emit_start=0 if position == 0 else lookahead * hop_length,
             emit_stop=emit_stop,
             return_state_at=window,
             is_last=False,
@@ -144,7 +146,7 @@ def plan_window(
     return DecodeWindow(
         start=position,
         stop=padded_len,
-        emit_start=0 if position == 0 else lookahead * HOP_LENGTH,
+        emit_start=0 if position == 0 else lookahead * hop_length,
         emit_stop=None,
         return_state_at=None,
         is_last=True,
@@ -177,7 +179,8 @@ class StreamingDecoder:
         self.window = window
         self.lookahead = lookahead
         self.conv_padding = conv_padding
-        self.sample_rate = int(getattr(codec, "sample_rate", SAMPLE_RATE))
+        self.sample_rate = int(getattr(codec, "sample_rate", OUTPUT_SAMPLE_RATE))
+        self.hop_length = self.sample_rate // TOKEN_RATE
         self.reset()
 
     # ------------------------------------------------------------------ state
@@ -212,7 +215,7 @@ class StreamingDecoder:
                 "prime() must come before the first push(): it discards audio from the start "
                 "of the stream, so real codes must not already be queued behind it."
             )
-        self._discard_samples += len(codes) * HOP_LENGTH
+        self._discard_samples += len(codes) * self.hop_length
         self.push_codes(codes)
 
     def push_codes(self, codes: Sequence[int] | Iterable[int]) -> None:
@@ -252,6 +255,7 @@ class StreamingDecoder:
                 window=self.window,
                 lookahead=self.lookahead,
                 conv_padding=self.conv_padding,
+                hop_length=self.hop_length,
             )
         ) is not None:
             pieces.append(self._decode_window(plan))

@@ -7,11 +7,12 @@ its surface is deliberately small and its defaults are the ones that are right:
 >>> wav = tts.generate("Hello world.")  # or voice=<a name from tts.voices()>
 >>> tts.save(wav, "out.wav")
 
-Audio is float32 mono numpy at 32 kHz, everywhere. :meth:`stream` yields
+Audio is float32 mono numpy at 48 kHz, everywhere -- :attr:`KovaTTS.sample_rate`, which the
+codec checkpoint decides. :meth:`stream` yields
 :class:`~kova_tts.engine.types.AudioFrame` as the codec produces it, which is the same audio
 :meth:`generate` returns, cut into ~390 ms pieces.
 
-Both take ``sample_rate=`` for callers that need something other than 32 kHz -- 16 kHz for a
+Both take ``sample_rate=`` for callers that need something other than 48 kHz -- 16 kHz for a
 voice-agent pipeline, 8 kHz for telephony. The two paths share one filter
 (:mod:`kova_tts.audio`), and the streaming one carries its state across frames, so asking for a
 rate does not change which audio you get, only how it is sampled.
@@ -52,7 +53,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import torch
 
-from kova_codec.constants import SAMPLE_RATE, codes_to_seconds
+from kova_codec.constants import OUTPUT_SAMPLE_RATE, SAMPLE_RATE, codes_to_seconds
 from kova_tts import audio as audio_io
 from kova_tts import voices as voices_module
 from kova_tts.engine import backends
@@ -188,7 +189,6 @@ class KovaTTS:
         self.clone_preroll = clone_preroll
         self.transcriber = transcriber
         self.decode_window = int(decode_window)
-        self.sample_rate = SAMPLE_RATE
         self._codec = codec
         self._encoding_codec = None
         self._codec_path: Path | str | None = None
@@ -257,6 +257,15 @@ class KovaTTS:
         return self._codec
 
     @property
+    def sample_rate(self) -> int:
+        """Rate of the audio this model produces: 48 kHz with the shipped codec.
+
+        Read off the codec, since the decoder checkpoint is what decides it, so asking loads
+        the codec if nothing has yet.
+        """
+        return int(getattr(self.codec, "sample_rate", OUTPUT_SAMPLE_RATE))
+
+    @property
     def encoding_codec(self):
         """A second codec that can encode, loaded with WavLM. Only :meth:`clone` needs it."""
         if self._encoding_codec is None:
@@ -282,17 +291,26 @@ class KovaTTS:
         transcript: str | None = None,
         *,
         name: str | None = None,
+        sample_rate: int = SAMPLE_RATE,
     ) -> Voice:
         """Build a cloneable voice from a reference recording and its transcript.
 
         `transcript` must match the clip word for word. Leaving it ``None`` needs ASR, which
         this package deliberately does not ship: pass `transcriber` to the constructor, or give
         the transcript yourself.
+
+        A file is resampled on the way in. A waveform is taken to be at `sample_rate`, which
+        defaults to the encoder's 32 kHz (:data:`~kova_codec.constants.SAMPLE_RATE`) rather than
+        to :attr:`sample_rate` -- so to clone from this model's own output, pass
+        ``sample_rate=tts.sample_rate``.
         """
         if transcript is None:
             transcript = self._transcribe(audio)
+        if isinstance(audio, np.ndarray):
+            audio = audio_io.resample(audio, int(sample_rate), SAMPLE_RATE)
+        # The encoder takes 32 kHz whatever rate the decoder produces.
         return voices_module.from_audio(
-            audio, transcript, codec=self.encoding_codec, name=name, sample_rate=self.sample_rate
+            audio, transcript, codec=self.encoding_codec, name=name, sample_rate=SAMPLE_RATE
         )
 
     def _transcribe(self, audio: str | os.PathLike[str] | np.ndarray) -> str:
@@ -322,7 +340,7 @@ class KovaTTS:
     ) -> np.ndarray:
         """Synthesize `text` and return the whole waveform: float32 mono.
 
-        `sample_rate` defaults to the model's native 32 kHz. Any other rate is converted on the
+        `sample_rate` defaults to the model's native 48 kHz. Any other rate is converted on the
         way out with :func:`kova_tts.audio.resample`, which is the same filter :meth:`stream`
         applies, so the two return the same audio at any rate.
         """
@@ -359,7 +377,7 @@ class KovaTTS:
         ``is_final=True``, even when it holds no samples, so a consumer can close cleanly.
         ``AudioFrame.sample_rate`` is always the rate actually delivered.
 
-        `sample_rate` defaults to the model's native 32 kHz. Any other rate goes through a
+        `sample_rate` defaults to the model's native 48 kHz. Any other rate goes through a
         :class:`~kova_tts.audio.StreamingResampler`, whose filter state crosses the frame
         boundaries -- resampling each frame on its own instead would leave a step at every join,
         two or three times a second. Its tail is flushed into the final frame, so no samples are
