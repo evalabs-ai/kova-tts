@@ -1,6 +1,187 @@
-PLACEHOLDER — the code license has not been chosen yet.
+RESEARCH AND NON-COMMERCIAL MODEL LICENSE
 
-Until this file is replaced with real license text, no license is granted for the
-source code in this repository.
+Kova TTS 1 Open Source Release (kova-tts-1-os)
 
-Model weights are covered separately by LICENSE-WEIGHTS.
+Effective Date: August 25, 2026
+
+This Research and Non-Commercial Model License (this "Agreement") is a legal agreement between you, whether an individual or a legal entity ("You" or "Licensee"), and Expressive Voice Assistant Laboratories, Inc., a corporation incorporated under the Business Corporations Act (Québec), doing business as Kova AI (the "Company"), regarding your access to and use of the speech synthesis models, source code, and related materials made available by the Company in connection with its open source Kova TTS release.
+
+BY DOWNLOADING, ACCESSING, OR OTHERWISE USING THE MODEL MATERIALS (AS DEFINED BELOW), YOU AGREE TO BE BOUND BY THE TERMS OF THIS AGREEMENT. IF YOU DO NOT AGREE TO THESE TERMS, YOU MUST NOT DOWNLOAD, ACCESS, OR USE THE MODEL MATERIALS. IF YOU ARE ACCEPTING THIS AGREEMENT ON BEHALF OF AN ORGANIZATION, YOU REPRESENT THAT YOU HAVE THE AUTHORITY TO BIND THAT ORGANIZATION TO THIS AGREEMENT.
+
+BACKGROUND
+
+A. The Company has developed certain speech synthesis models, source code, and related materials for its Kova TTS product, which it wishes to make available to the public for research and non-commercial use on the terms of this Agreement.
+
+B. As of the effective date of this Agreement, the models described in paragraph A above are based solely on synthetic training data and do not incorporate any voice recording, biometric data, or other personal information of any identifiable natural person.
+
+C. Capitalized terms used in this Agreement have the meanings given in Section 1 below or, in the case of "Agreement", "You", "Licensee", and "Company", in the paragraph above.
+
+1. DEFINITIONS
+
+1.1 "Derivative Model" means any model, checkpoint, adapter, or other machine learning artifact created by modifying, fine-tuning, distilling, quantizing, merging, or otherwise adapting the Model Weights, in whole or in part. For clarity, Derivative Model does not include Output.
+
+1.2 "Distribute" means to make the Model Materials or a Derivative Model available to any third party, whether by upload, transfer, publication, hosting on a public or private repository, or any other means.
+
+1.3 "Documentation" means any manuals, specifications, release notes, or other materials describing the installation, configuration, or use of the Model Materials, made available by the Company.
+
+1.4 "Model Materials" means, collectively, the Model Weights, the Software, and the Documentation made available by the Company as part of the "kova-tts-1-os" package, currently published at https://huggingface.co/kova-ai/kova-tts-1, together with any updates the Company may make available for that package from time to time.
+
+1.5 "Model Weights" means the trained parameters, checkpoints, and related model files made available by the Company as part of the Model Materials.
+
+1.6 "Non-Commercial Purpose" means any use of the Model Materials, a Derivative Model, or any Output that is not intended for, or directed toward, commercial advantage, revenue generation, or monetary compensation, and that does not form part of a live, revenue-generating, or customer-facing product or service. For clarity, Non-Commercial Purpose does not include (a) using the Model Materials, any Output, or any Derivative Model to develop, train, fine-tune, distill, or otherwise improve any other text-to-speech or voice synthesis model intended for commercial use, or (b) any revenue-generating activity, including a project funded in whole or in part by a government grant that generates revenue.
+
+1.7 "Output" means any audio, text, or other content generated through the use of the Model Materials.
+
+1.8 "Research Purpose" means academic, scientific, or technical research, testing, benchmarking, and evaluation of the Model Materials, a Derivative Model, or any Output, including internal evaluation by an organization to assess the potential fit, integration, or performance of the Model Materials, a Derivative Model, or any Output for a possible future application.
+
+1.9 "Software" means the source code, scripts, and other software tools made available by the Company as part of the Model Materials.
+
+1.10 "Training Data" means recordings, audio, transcripts, annotations, datasets, or other source materials used to train, evaluate, or develop the Model Weights.
+
+1.11 Other Defined Terms. The terms "Agreement", "You", "Licensee", and "Company" have the meanings given to them in the preamble above.
+
+2. LICENSE GRANT
+
+2.1 Grant. Subject to your compliance with this Agreement, the Company grants you a limited, non-exclusive, worldwide, non-transferable, non-sublicensable, and revocable license to access, download, install, use, and reproduce the Model Materials, to evaluate, test, and benchmark the Model Materials, and to create and use Derivative Models, in each case solely for a Research Purpose or a Non-Commercial Purpose.
+
+2.2 No Commercial Use. This Agreement does not grant any right to use the Model Materials, any Derivative Model, or any Output for a commercial purpose. For clarity, offering a product or service to third parties that relies on the Model Materials, or deploying the Model Materials in a live, revenue-generating, or customer-facing environment, requires a separate written commercial license from the Company.
+
+2.3 Reservation of Rights. All rights not expressly granted under this Agreement are reserved by the Company.
+
+3. PATENT
+
+3.1 Patent License. Subject to your compliance with this Agreement, the Company grants you a non-exclusive, worldwide, royalty-free license under any patent claims that the Company owns or controls as of the effective date of this Agreement, and that are necessarily infringed by your use of the Model Materials as permitted under Section 2, solely to the extent required to exercise the rights granted in that Section.
+
+3.2 Defensive Termination. If you, or any entity acting on your behalf, institute or voluntarily participate in a patent infringement claim or proceeding against the Company or any of its affiliates alleging that the Model Materials, in whole or in part, infringe a patent, all licenses granted to you under this Agreement will terminate automatically and immediately as of the date such claim or proceeding is instituted.
+
+4. DISTRIBUTION AND DERIVATIVE MODELS
+
+4.1 Permitted Distribution. You may Distribute the Model Materials, or any Derivative Model, provided that you (a) include a complete and unmodified copy of this Agreement with any such Distribution, (b) ensure that any recipient’s use of the Model Materials or the Derivative Model remains subject to the restrictions of this Agreement, and (c) do not remove, obscure, or alter any notice of authorship, trademark, or attribution included with the Model Materials.
+
+4.2 No Broader Sublicense. You may not sublicense, sell, rent, lease, or otherwise make the Model Materials or any Derivative Model available to any third party on terms broader than, or inconsistent with, those of this Agreement.
+
+4.3 Direct Grant to Recipients. You do not sublicense the Company’s rights in the Model Materials. Each recipient who receives the Model Materials or a Derivative Model from you receives an offer directly from the Company to exercise the rights expressly granted under this Agreement, subject to that recipient’s acceptance of and compliance with this Agreement.
+
+4.4 No Additional Restrictions. You may not impose any term, technological measure, or condition that purports to prevent a downstream recipient from exercising the rights that the Company directly grants under this Agreement, except to the extent necessary to comply with applicable law or to enforce separate rights in your own independently created contributions.
+
+4.5 Modification Disclosure. If you Distribute a Derivative Model, you must clearly state that the Model Materials have been modified, identify the person or entity responsible for the modification, and provide a reasonably informative description of the material modifications made.
+
+5. ATTRIBUTION
+
+5.1 Attribution Notice. If you publicly Distribute the Model Materials or a Derivative Model, or publish a paper, blog post, benchmark, or other material describing results obtained using the Model Materials, you will include a reasonably visible attribution substantially as follows: "Built with Kova TTS", together with a link to kova.ai/text-to-speech, or such other notice as the Company may specify in the Documentation.
+
+5.2 No Trademark License. Except as expressly required under Section 5.1, this Agreement does not grant you any right to use the Company’s name, logo, or other trademarks.
+
+5.3 No False Endorsement. You may not state or imply that the Company sponsors, endorses, certifies, or approves you, your Derivative Model, or your project, except where the Company has separately authorized such a statement in writing.
+
+6. OWNERSHIP
+
+6.1 Company Ownership. The Company retains all right, title, and interest in and to the Model Materials, including all intellectual property rights therein. No rights are granted to you by implication, estoppel, or otherwise, other than as expressly set out in this Agreement.
+
+6.2 Output. As between you and the Company, you own the Output you generate through your use of the Model Materials, to the extent permitted by applicable law, subject to the Company’s ownership of the Model Materials and to your continued compliance with this Agreement. You are solely responsible for the Output you generate and for your use and Distribution of that Output.
+
+6.3 Derivative Models. As between you and the Company, you own any Derivative Model you create, subject to the Company’s ownership of the Model Materials incorporated therein. Any Derivative Model remains subject to the restrictions of this Agreement, including the restrictions in Section 2.2 and Section 8.
+
+6.4 Third-Party Components. The Model Materials may incorporate or be distributed together with third-party open source software, models, or datasets that are subject to their own separate license terms. This Agreement does not expand, restrict, or otherwise affect the terms of any such separate license, and those components remain governed by their own license terms.
+
+6.5 No Rights in Training Data. No rights in Training Data are granted under this Agreement. Distribution of the Model Weights does not constitute distribution or licensing of Training Data.
+
+6.6 Your Separate Terms. You may apply separate license terms to intellectual property that you independently create in a Derivative Model, provided those terms do not purport to grant commercial rights in the underlying Model Materials, do not reduce the obligations applicable to the Model Materials under this Agreement, and do not conflict with Section 4.4.
+
+7. VOICE AND PERSONALITY RIGHTS
+
+7.1 No Personality Rights License. This Agreement does not grant any right or license in the voice, name, image, likeness, or other personality, privacy, or publicity rights of any identifiable individual.
+
+7.2 Your Reference Material. If you provide any reference audio, recording, or other material to the Model Materials for the purpose of generating Output, including for voice cloning or similar functionality, you are solely responsible for obtaining all rights, consents, and authorizations required to use that material, and the Company’s provision of the Model Materials does not constitute any such authorization.
+
+7.3 Third-Party Rights in Output. Output may be subject to third-party rights, including copyright, performer rights, privacy rights, personality or publicity rights, contractual rights, trademark rights, or other rights. You are solely responsible for evaluating and obtaining any rights or permissions required for your Output and your intended use of it.
+
+8. ACCEPTABLE USE
+
+8.1 You will not, and will not permit any other person to, use the Model Materials, any Derivative Model, or any Output to:
+
+(a) generate audio that impersonates, or is reasonably likely to be mistaken for, a specific identifiable individual, or that clones or replicates the voice of any individual, without that individual’s prior, informed, and verifiable consent;
+
+(b) create, facilitate, or distribute fraudulent, deceptive, or misleading content, including scams, phishing, fraudulent robocalls, or content intended to circumvent voice based authentication or biometric security;
+
+(c) generate content that exploits, or facilitates the exploitation of, minors;
+
+(d) create or distribute synthetic audio constituting non-consensual intimate or sexually exploitative content, unlawful harassment or stalking, a credible threat of violence, or extortion or blackmail;
+
+(e) misrepresent synthetically generated audio as a recording of a live human being, where such misrepresentation is prohibited by, or where a disclosure is required under, applicable law;
+
+(f) create materially deceptive synthetic audio falsely presented as the authentic speech of a real public official, candidate, journalist, or other identifiable public figure, where the purpose or reasonably foreseeable effect is to deceive the public regarding a material statement or event;
+
+(g) violate any applicable law, or infringe any intellectual property, privacy, or other right of any third party; or
+
+(h) use the Model Materials, any Output, or any Derivative Model to develop, train, fine-tune, distill, or otherwise improve a competing commercial text-to-speech or voice synthesis model, except as expressly permitted under a separate written commercial license from the Company.
+
+8.2 Export Control. You will comply with all applicable export control and economic sanctions laws, including those of Canada, in connection with your access to, use of, and Distribution of the Model Materials.
+
+8.3 Output Accuracy. You acknowledge that Output generated through the Model Materials may be inaccurate, incomplete, or unsuitable for certain purposes, and that you are solely responsible for evaluating the suitability of any Output before relying on it.
+
+8.4 No Facilitating Violations. You may not knowingly assist, enable, or induce another person to do anything that would violate this Agreement if done by you.
+
+9. FEEDBACK
+
+9.1 Feedback License. If you provide the Company with any suggestions, ideas, or other feedback regarding the Model Materials, you grant the Company a perpetual, irrevocable, worldwide, royalty-free license to use, reproduce, and incorporate that feedback for any purpose, without any obligation or compensation to you.
+
+10. DISCLAIMER OF WARRANTIES
+
+10.1 THE MODEL MATERIALS ARE PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT WARRANTIES OF ANY KIND, WHETHER EXPRESS, IMPLIED, OR STATUTORY, INCLUDING, WITHOUT LIMITATION, ANY IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, OR NON-INFRINGEMENT. THE COMPANY DOES NOT WARRANT THAT THE MODEL MATERIALS OR ANY OUTPUT WILL BE ACCURATE, RELIABLE, OR ERROR FREE. THE FOREGOING DOES NOT AFFECT ANY WARRANTY THAT CANNOT BE EXCLUDED OR LIMITED UNDER APPLICABLE LAW.
+
+10.2 High-Risk Use. The Model Materials are not intended for reliance in safety-critical, medical, legal, financial, authentication, or other high-risk decision-making without independent safeguards appropriate to the use case.
+
+11. LIMITATION OF LIABILITY
+
+11.1 TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT WILL THE COMPANY BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR FOR ANY LOSS OF PROFITS, REVENUE, DATA, OR BUSINESS OPPORTUNITY, ARISING OUT OF OR RELATED TO THIS AGREEMENT, REGARDLESS OF THE THEORY OF LIABILITY, EVEN IF THE COMPANY HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+11.2 THE COMPANY’S TOTAL AGGREGATE LIABILITY ARISING OUT OF OR RELATED TO THIS AGREEMENT WILL NOT EXCEED ONE HUNDRED CANADIAN DOLLARS (CAD $100). NOTHING IN THIS AGREEMENT LIMITS OR EXCLUDES ANY LIABILITY THAT CANNOT LAWFULLY BE LIMITED OR EXCLUDED, INCLUDING LIABILITY FOR GROSS NEGLIGENCE, INTENTIONAL FAULT, OR FOR DEATH OR BODILY INJURY CAUSED BY THE COMPANY’S NEGLIGENCE.
+
+12. INDEMNIFICATION
+
+12.1 Indemnity. You will indemnify, defend, and hold harmless the Company, its directors, officers, employees, and agents from and against any claims, liabilities, damages, costs, and expenses, including reasonable legal fees, arising out of or related to your use of the Model Materials, any Derivative Model, or any Output, or your breach of this Agreement.
+
+13. TERM AND TERMINATION
+
+13.1 Term. This Agreement takes effect upon your first access to, download of, or use of the Model Materials, and continues until terminated as provided in this Section 13.
+
+13.2 Termination by the Company. The Company may terminate or suspend this Agreement, and any rights granted to you hereunder, at any time, for any reason or no reason, in its sole discretion, with or without notice to you.
+
+13.3 Automatic Termination. This Agreement terminates automatically, without notice, if you breach any provision of this Agreement.
+
+13.4 Effect of Termination. Upon termination, you must immediately cease all use of the Model Materials and, upon the Company’s request, destroy or delete all copies of the Model Materials in your possession or control. Copies of the Model Materials or Derivative Models already distributed to third parties prior to termination are not required to be recalled, but such third parties remain subject to their own compliance with this Agreement.
+
+13.5 Outputs Generated Before Termination. Termination of this Agreement does not, by itself, require you to delete Output lawfully generated before termination, provided your continued possession or use of that Output does not otherwise violate this Agreement or applicable law.
+
+13.6 Downstream Recipients. Termination of your rights under this Agreement does not automatically terminate the rights of a downstream recipient who independently accepted this Agreement and remains in compliance with it.
+
+13.7 Survival. Sections 6, 7, 9, 10, 11, 12, 15, and 16, and any other provision that by its nature is intended to survive termination, survive any termination of this Agreement.
+
+14. UPDATES TO THIS AGREEMENT
+
+14.1 Revisions. The Company may revise this Agreement from time to time by posting an updated version. Any such revision applies prospectively to your continued use of the Model Materials following the date the revised Agreement is posted. Model Materials downloaded prior to that date remain governed by the version of the Agreement in effect at the time of download, unless you elect to accept the revised version.
+
+15. GOVERNING LAW AND JURISDICTION
+
+15.1 Governing Law. This Agreement is governed by the laws of the Province of Québec and the federal laws of Canada applicable therein, without regard to conflict of laws principles.
+
+15.2 Jurisdiction. Any dispute arising out of or relating to this Agreement will be submitted to the exclusive jurisdiction of the courts of competent jurisdiction in the judicial district of Montréal, Province of Québec, and you irrevocably attorn to the jurisdiction of such courts.
+
+15.3 Mandatory Rights. Nothing in this Agreement excludes, limits, or waives any right, protection, or remedy that applicable law does not permit the parties to exclude or waive, including any protection applicable to a contract of adhesion under the Civil Code of Québec.
+
+16. GENERAL PROVISIONS
+
+16.1 Entire Agreement. This Agreement constitutes the entire agreement between you and the Company regarding the Model Materials and supersedes all prior or contemporaneous understandings, whether written or oral.
+
+16.2 Severability. If any provision of this Agreement is held invalid or unenforceable, the remaining provisions will remain in full force and effect.
+
+16.3 No Waiver. No failure or delay by the Company in exercising any right under this Agreement operates as a waiver of that right.
+
+16.4 Assignment. You may not assign or transfer this Agreement without the Company’s prior written consent. The Company may assign this Agreement without restriction, including in connection with a merger, acquisition, or sale of assets.
+
+16.5 Relationship of the Parties. Nothing in this Agreement creates a partnership, joint venture, agency, or employment relationship between you and the Company.
+
+16.6 Interpretation. The words "including" and "includes" mean "including without limitation." Singular terms include the plural and vice versa where the context requires. Headings are for convenience only and do not affect interpretation.
+
+16.7 Notices. Notices to the Company under this Agreement should be sent to [legal@evalabs.ai](mailto:legal@evalabs.ai).
