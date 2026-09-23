@@ -33,3 +33,11 @@ parameter compensates for.
 
 This package is inference only: it loads a trained checkpoint and runs encode and decode. There
 is no training code here.
+
+## License
+
+Kova-provided code is governed by the [Research and Non-Commercial Model License](https://github.com/evalabs-ai/kova-tts/blob/main/LICENSE).
+Commercial use requires a separate written commercial license. Third-party components
+retain their own terms; see [NOTICE](https://github.com/evalabs-ai/kova-tts/blob/main/NOTICE) and [third-party licenses](https://github.com/evalabs-ai/kova-tts/tree/main/licenses/third-party).
+The model and voice terms are explained in the
+[repository licensing guide](https://github.com/evalabs-ai/kova-tts/blob/main/LICENSE-WEIGHTS).

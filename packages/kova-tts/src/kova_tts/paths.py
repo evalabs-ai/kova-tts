@@ -17,8 +17,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-#: Hub repository holding the LM, tokenizer, codec checkpoint and bundled voices.
-DEFAULT_HUB_REPO = "kova-ai/kova-tts-1b"
+#: Hub repository holding the LM, tokenizer and codec checkpoint. Voices are separate.
+DEFAULT_HUB_REPO = "kova-ai/kova-tts-1"
 
 #: Codec checkpoint filename within the Hub repository.
 CODEC_HUB_FILENAME = "codec.pt"

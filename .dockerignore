@@ -71,3 +71,5 @@ out/
 # `docker/` itself stays in the context: the image copies `docker/entrypoint.sh` out of it.
 # `docker/.env` -- compose's own configuration, which names host checkpoint directories -- is
 # already excluded by the `**/.env` rule above.
+
+.DS_Store

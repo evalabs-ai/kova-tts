@@ -45,8 +45,8 @@ docker run --rm --gpus all -p 8000:8000 \
 ```
 
 The layout is a convention, not a requirement — the four `KOVA_*` variables are what actually
-decide, and they can point anywhere you have mounted. Any one of them left unset falls back to
-the Hugging Face Hub.
+decide, and they can point anywhere you have mounted. The model, codec, and WavLM fall back to
+the Hugging Face Hub when unset. LoRA voices require a local directory mounted into the container.
 
 ### From the Hub
 
@@ -66,9 +66,24 @@ Prefetch it deliberately, rather than discovering the download during your first
 docker run --rm -v kova-hf-cache:/home/kova/.cache/huggingface kova-tts:latest download --wavlm
 ```
 
-> The released weights are not published yet, so this path has nothing to fetch today. When
-> they are, `KOVA_HUB_REPO` points at whichever repository you have access to, and `HF_TOKEN`
-> covers a gated one.
+The default base-model repository is `kova-ai/kova-tts-1`. Set `KOVA_HUB_REPO` to use another
+repository. For private or gated access, pass `HF_TOKEN` from your environment with
+`-e HF_TOKEN` on each Docker command that downloads model files.
+
+The five pretrained LoRA voices are a separate download from
+[`kova-ai/kova-tts-1-voices`](https://huggingface.co/kova-ai/kova-tts-1-voices).
+From the code checkout on the host:
+
+```bash
+uv run hf download kova-ai/kova-tts-1-voices --local-dir ./voices
+docker run --rm --gpus all -p 8000:8000 \
+  -v kova-hf-cache:/home/kova/.cache/huggingface \
+  -v "$PWD/voices:/voices:ro" \
+  -e KOVA_LORA_DIR=/voices \
+  kova-tts:latest
+```
+
+Keep the voice package's legal documents alongside the adapter folders.
 
 ### With compose
 
@@ -203,11 +218,11 @@ Read it against what you expected:
   kova-tts:latest ls -la /weights`.
 - **`config  /app/.env`** — you are bind-mounting a checkout and it brought its own `.env`. See
   [configuration](#configuration).
-- **A repo id where you expected a path** (`kova-ai/kova-tts-1b`) — that variable is unset, so
+- **A repo id where you expected a path** (`kova-ai/kova-tts-1`) — that variable is unset, so
   it fell through to the Hub. Empty strings count as unset, which is why compose passes
   `KOVA_MODEL_PATH: ""` by default rather than a placeholder that would fail.
-- **`Could not download ...`** — the released weights are not public yet. Point `KOVA_HUB_REPO`
-  at a repository you have access to, or mount local checkpoints.
+- **`Could not download ...`** — check network access and the repository ID. For a private or
+  gated repository, pass `HF_TOKEN` for an account with access. You can also mount local checkpoints.
 - **`voices  none` with `loras` set** — a voice is a directory containing `adapter_config.json`.
   A directory of `.safetensors` files with no config is not one.
 - **Permission denied writing the output wav** — the container runs as uid 1000. Either create
@@ -287,3 +302,13 @@ so the image cannot run the test suite. That is on purpose; run tests on the hos
 - **One request at a time.** The server serializes on the model and answers a second concurrent
   caller with `409`; `--busy-timeout` decides how long it waits first. Running two containers
   against one GPU is not a way around this — it is two copies of the weights in VRAM.
+
+## License files in the image
+
+The image includes `/app/LICENSE`, `/app/NOTICE`, and `/app/licenses/third-party/`.
+The Python package builds automatically include the same legal files in their installed
+metadata. The Docker build verifies those installed copies against the root files and
+fails if any are missing or different.
+
+Pretrained voices are downloaded or mounted separately. Keep their `LICENSE`,
+`LICENSE-SUPPLEMENT`, dataset `NOTICE`, and component notices with that voice package.

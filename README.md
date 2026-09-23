@@ -16,6 +16,10 @@ them to 32 kHz speech. Both halves live here.
 
 **Documentation: [`docs/`](docs/index.md)**, or `uv run mkdocs serve` for the rendered site.
 
+Model files are hosted separately on Hugging Face:
+[base model and codec](https://huggingface.co/kova-ai/kova-tts-1) and
+[five LoRA voices](https://huggingface.co/kova-ai/kova-tts-1-voices).
+
 ## Install
 
 Requires Python 3.10+, [uv](https://docs.astral.sh/uv/), and a CUDA GPU for anything
@@ -25,25 +29,29 @@ the same model at [kova.ai](https://kova.ai).
 ```bash
 git clone https://github.com/evalabs-ai/kova-tts
 cd kova-tts
-uv sync                   # add --all-extras for the server, demo, ASR and finetuning
+uv sync                   # core inference; add extras for the demo, server or training
 ```
 
 On an Apple Silicon Mac, add `--extra mlx` and use a checkpoint converted for it: a base M1
 lands at 0.7–0.8x real time end to end, against several times real time on a recent NVIDIA card.
 See [docs/apple-silicon.md](docs/apple-silicon.md).
 
-> [!IMPORTANT]
-> **The Hugging Face repository is not published yet.** With no local checkpoints configured,
-> `KovaTTS.from_pretrained()` falls through to the Hub and raises a 404 — there is nothing to
-> download, and `kova-tts download` cannot help either. Point the paths at checkpoints you have:
->
-> ```bash
-> cp .env.example .env     # fill in KOVA_MODEL_PATH and KOVA_CODEC_PATH
-> uv run kova-tts paths    # shows what resolved, and what didn't
-> ```
->
-> `.env` is found by walking up from your working directory, so run commands from the checkout
-> or export the variables yourself. See [docs/installation.md](docs/installation.md).
+The base model and codec download automatically on first use. To download them ahead of time:
+
+```bash
+uv run kova-tts download
+```
+
+For the five pretrained voices, download the separate adapter package and set its local path:
+
+```bash
+uv run hf download kova-ai/kova-tts-1-voices --local-dir ./voices
+export KOVA_LORA_DIR="$PWD/voices"
+```
+
+The available voice names are `bdl`, `slt`, `jmk`, `awb`, and `Kathleen`.
+See [Installation](docs/installation.md) for local checkpoint paths, authentication,
+and offline use.
 
 ## Quickstart
 
@@ -143,7 +151,7 @@ nothing here — see [License](#license).
 ## Development
 
 ```bash
-uv sync --all-extras
+uv sync --extra server --extra demo --extra data --extra finetune
 uv run pytest                                 # everything, including GPU and weight-backed tests
 uv run pytest -m "not gpu and not weights"    # what CI runs
 uv run ruff check . && uv run ruff format .
@@ -155,5 +163,16 @@ Tests that need a CUDA device are marked `gpu`; tests that need real checkpoints
 
 ## License
 
-Not yet chosen. [LICENSE](LICENSE) and [LICENSE-WEIGHTS](LICENSE-WEIGHTS) are placeholders that
-grant nothing; assume no license is granted until they are replaced.
+Kova-provided source code, base-model weights, and documentation are governed by the
+[Research and Non-Commercial Model License](LICENSE). Commercial use of these materials,
+derived models, or generated output requires a separate written commercial license.
+
+The five pretrained LoRA voices also require the
+[Voice Package Supplement](https://huggingface.co/kova-ai/kova-tts-1-voices/blob/main/LICENSE-SUPPLEMENT)
+and [voice NOTICE](https://huggingface.co/kova-ai/kova-tts-1-voices/blob/main/NOTICE).
+See [LICENSE-WEIGHTS](LICENSE-WEIGHTS) for the model repository links.
+Third-party components retain their own terms; their notices and full license texts are in
+[NOTICE](NOTICE) and [licenses/third-party](licenses/third-party/README.md).
+
+Built with [Kova TTS](https://kova.ai/text-to-speech). Built with Llama.
+License questions: legal@evalabs.ai.

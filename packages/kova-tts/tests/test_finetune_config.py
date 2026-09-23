@@ -82,9 +82,9 @@ class TestPathResolution:
 
     def test_a_hub_id_is_not_treated_as_a_path(self, workspace):
         config = load_config(
-            write_config(workspace, "dataset: data/train.jsonl\nmodel: kova-ai/kova-tts-1b\n")
+            write_config(workspace, "dataset: data/train.jsonl\nmodel: kova-ai/kova-tts-1\n")
         )
-        assert config.model == "kova-ai/kova-tts-1b"
+        assert config.model == "kova-ai/kova-tts-1"
 
     def test_an_explicitly_relative_model_path_is_resolved(self, workspace):
         config = load_config(

@@ -108,8 +108,11 @@ RUN --mount=type=cache,target=/tmp/uv-cache,uid=${KOVA_UID},gid=${KOVA_GID},shar
 
 # Layer 2: the project. Cheap, because layer 1 already installed everything it depends on.
 COPY --chown=kova:kova . /app
+# The full copy above includes LICENSE, NOTICE, licenses/, and the shared build hook.
+# Verify the installed package metadata and legal files against those root copies.
 RUN --mount=type=cache,target=/tmp/uv-cache,uid=${KOVA_UID},gid=${KOVA_GID},sharing=locked \
-    uv sync --frozen --no-default-groups ${KOVA_EXTRAS}
+    uv sync --frozen --no-default-groups ${KOVA_EXTRAS} \
+    && /app/.venv/bin/python scripts/check_package_licenses.py --installed
 
 USER root
 COPY docker/entrypoint.sh /usr/local/bin/kova-entrypoint

@@ -45,7 +45,7 @@ uv run kova-tts paths
 
 ```
 config    /home/you/kova-tts/.env
-model     /models/kova-tts-1b
+model     /models/kova-tts-1
 wavlm     /models/wavlm-large
 codec     /models/kova/codec.pt
 loras     /models/kova/voices
@@ -259,23 +259,19 @@ uv run kova-tts download --wavlm --cache-dir /models/hub
 | `--repo` | Hub repo holding the LM and codec |
 | `--wavlm` | Also fetch WavLM, needed only to encode audio |
 | `--cache-dir` | Hub cache directory to fill |
-| `--token` | Hub token, for a gated repository |
+| `--token` | Hub token, for a private or gated repository |
 | `--force` | Re-download even when the cache already has it |
 
 Artifacts already pointed at a local path by `.env` are reported and skipped — downloading a
 second copy would be a surprise measured in gigabytes.
 
-!!! warning "This cannot work yet"
+The default base repository is `kova-ai/kova-tts-1`. Override it with `--repo` or
+`KOVA_HUB_REPO`. For a private or gated repository, run `uv run hf auth login` using
+an account that has access. To use local files, set `KOVA_MODEL_PATH` and
+`KOVA_CODEC_PATH`; `kova-tts paths` shows what resolved.
 
-    The published repository does not exist. Today the command fails with a 404 and prints what
-    to do instead:
-
-    ```
-    error: Could not download the model repository 'kova-ai/kova-tts-1b': RepositoryNotFoundError: 404 Client Error.
-      - the released weights may not be public yet; set KOVA_HUB_REPO to the repository you have access to,
-      - or run `huggingface-cli login` if it is gated,
-      - or point KOVA_MODEL_PATH / KOVA_CODEC_PATH at local checkpoints and skip the download entirely (`kova-tts paths` shows what resolved).
-    ```
+This command does not fetch the separate pretrained LoRA voices. See
+[Getting the weights](installation.md#getting-the-weights) for that download.
 
 The same flags are available as a standalone script,
 [`scripts/download_weights.py`](https://github.com/evalabs-ai/kova-tts/blob/main/scripts/download_weights.py),

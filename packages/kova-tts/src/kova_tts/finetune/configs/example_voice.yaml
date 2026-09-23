@@ -46,7 +46,7 @@ max_length: 4096
 
 # Base checkpoint: a local directory or a Hugging Face repo id. Unset means "whatever
 # KOVA_MODEL_PATH points at", falling back to the published checkpoint.
-# model: kova-ai/kova-tts-1b
+# model: kova-ai/kova-tts-1
 
 # Continue training an adapter you already have, instead of starting from scratch -- another
 # pass over new material. The existing adapter's own config defines r/alpha/target_modules,

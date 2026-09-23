@@ -29,7 +29,7 @@ then the matching `KOVA_*` environment variable, then the Hugging Face Hub. To p
 checkpoints, set them in the environment ComfyUI starts in:
 
 ```bash
-export KOVA_MODEL_PATH=/models/kova-tts-1b
+export KOVA_MODEL_PATH=/models/kova-tts-1
 export KOVA_CODEC_PATH=/models/kova/codec.pt
 export KOVA_LORA_DIR=/models/kova/voices
 ```

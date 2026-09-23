@@ -6,22 +6,60 @@ This product includes software developed by Eva Labs.
 Third-party components
 ----------------------
 
-The language model backbone is derived from Meta's Llama 3.2 and remains subject to the
-Llama 3.2 Community License Agreement:
-https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/LICENSE
+Kova TTS uses the components listed below. Each component retains its separate
+license terms. An individual code, base-model, or adapter distribution may contain
+only a subset; references to separately downloaded components are informational.
+Full upstream license texts and their source URLs are in licenses/third-party/.
 
-The codec's semantic encoder uses WavLM-large (Microsoft, MIT License):
-https://huggingface.co/microsoft/wavlm-large
+Llama 3.2
+The language model backbone is derived from Meta's Llama 3.2.
+Llama 3.2 is licensed under the Llama 3.2 Community License, Copyright © Meta Platforms, Inc. All Rights Reserved.
+Built with Llama.
+https://github.com/meta-llama/llama-models/tree/main/models/llama3_2
+License: licenses/third-party/llama-3.2-LICENSE.txt
+Acceptable use policy: licenses/third-party/llama-3.2-USE-POLICY.md
 
-The codec architecture derives from BigCodec:
+BigCodec
+The codec architecture derives from BigCodec.
+Copyright (c) 2024 Xin Detai
 https://github.com/Aria-K-Alethia/BigCodec
+License: licenses/third-party/bigcodec-LICENSE.txt (MIT)
 
-Alias-free activation and resampling modules derive from BigVGAN (NVIDIA, MIT License):
+BigVGAN
+Alias-free activation and resampling modules derive from BigVGAN.
+Copyright (c) 2024 NVIDIA CORPORATION.
 https://github.com/NVIDIA/BigVGAN
+License: licenses/third-party/bigvgan-LICENSE.txt (MIT)
 
-By way of BigVGAN, those modules also derive from:
-  alias-free-torch (Apache License 2.0)  https://github.com/junjun3518/alias-free-torch
-  snake (MIT License)                    https://github.com/EdwardDixon/snake
+alias-free-torch
+The alias-free activation, filtering, and resampling modules derive from
+alias-free-torch, via BigVGAN, and have been modified for Kova TTS.
+https://github.com/junjun3518/alias-free-torch
+License: licenses/third-party/alias-free-torch-LICENSE.txt (Apache 2.0)
 
-This NOTICE records attribution only. It grants no license to anything in this repository;
-see LICENSE and LICENSE-WEIGHTS, both of which are placeholders.
+snake
+The SnakeBeta activation derives from snake, via BigVGAN.
+Copyright (c) 2020 Edward Dixon
+https://github.com/EdwardDixon/snake
+License: licenses/third-party/snake-LICENSE.txt (MIT)
+
+julius
+The low-pass filter derives from julius, via alias-free-torch and BigVGAN.
+https://github.com/adefossez/julius
+License: licenses/third-party/julius-LICENSE.txt (MIT)
+
+WavLM
+The codec's encode path loads microsoft/wavlm-large separately from its upstream
+Hugging Face repository. It is not downloaded as part of the Kova model snapshot.
+https://huggingface.co/microsoft/wavlm-large
+Microsoft's unilm code repository uses MIT:
+  licenses/third-party/wavlm-code-LICENSE.txt
+The Hugging Face model card links to Microsoft UniSpeech's license for its model:
+  https://github.com/microsoft/UniSpeech/blob/main/LICENSE
+  licenses/third-party/wavlm-hub-linked-LICENSE.txt (CC BY-SA 3.0)
+These copies document the upstream sources separately; the Kova license does not
+replace the terms applicable to upstream code or models.
+
+This NOTICE records component attribution. See LICENSE for Kova's terms and the
+listed upstream licenses for third-party terms. The pretrained voice package also
+has its own LICENSE-SUPPLEMENT and dataset NOTICE.

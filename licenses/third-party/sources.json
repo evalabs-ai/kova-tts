@@ -1,0 +1,50 @@
+{
+  "retrieved": "2026-09-23",
+  "sources": [
+    {
+      "file": "llama-3.2-LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/meta-llama/llama-models/0e0b8c519242d5833d8c11bffc1232b77ad7f301/models/llama3_2/LICENSE",
+      "sha256": "8cc15535a8a34b41888f644b339a1a9eb428af793a4f5e24df58a3e5b1487d74"
+    },
+    {
+      "file": "llama-3.2-USE-POLICY.md",
+      "source": "https://raw.githubusercontent.com/meta-llama/llama-models/0e0b8c519242d5833d8c11bffc1232b77ad7f301/models/llama3_2/USE_POLICY.md",
+      "sha256": "40e2777d7faa6beaf98400654170f414d8ab29b921b5163ad4ea0a1d39894201"
+    },
+    {
+      "file": "bigcodec-LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/Aria-K-Alethia/BigCodec/09845ab1f5bc7a3d1589c16de820ef15bc2afefe/LICENSE",
+      "sha256": "67ffa779a98128ae58f20da6fad32874ffe5216ddf68615d369b80dc70daf7cb"
+    },
+    {
+      "file": "bigvgan-LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/NVIDIA/BigVGAN/7d2b454564a6c7d014227f635b7423881f14bdac/LICENSE",
+      "sha256": "5c7f573db5f807a9adc2a755c4901e203ea067f73c7a20fa6b703da7e77d7b35"
+    },
+    {
+      "file": "alias-free-torch-LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/junjun3518/alias-free-torch/390ccc265a4087b78cf1ee9098d48721d848fdc5/LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "file": "snake-LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/EdwardDixon/snake/90343ed9458364dc3e622fc37be49d35afc26a6b/LICENSE",
+      "sha256": "9901fe7833ce27a6754368e4b2be5dc1ecc887e5ab5b3afc296e9ddb3c779188"
+    },
+    {
+      "file": "julius-LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/adefossez/julius/2ff87901b0841a533053a5c34d0fa43486764086/LICENSE",
+      "sha256": "60f83da40026e37e259b69158852384ff2ee20615d9103a3f86b6cff48784661"
+    },
+    {
+      "file": "wavlm-code-LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/microsoft/unilm/31c5b904ca1bf2afb4c234a6675c683a4e5fc7cd/LICENSE",
+      "sha256": "904dc4d8749877f1dba1cda48200d2462dccbeb7c134d5e4ef6fa75e0198c8fe"
+    },
+    {
+      "file": "wavlm-hub-linked-LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/microsoft/UniSpeech/6112826ac13a4327f4c9a7afa2a505e35b763514/LICENSE",
+      "sha256": "74295d561f60f770a4aa7525b71c0d119ec70422e9f5c601ee3c77e1b7822c91"
+    }
+  ]
+}

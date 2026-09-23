@@ -22,15 +22,19 @@ tts.save(wav, "out.wav")
 
 Two things will bite a first-time reader, so they are stated here rather than buried.
 
-**The Hugging Face repository is not published yet.** `KovaTTS.from_pretrained()` with no local
-checkpoints configured raises a 404 — there is nothing to download. You need checkpoints on disk
-and `KOVA_MODEL_PATH` / `KOVA_CODEC_PATH` pointed at them. [Installation](installation.md)
-explains the setup, and `kova-tts paths` tells you whether it worked.
+**Model downloads.** The [base model and codec](https://huggingface.co/kova-ai/kova-tts-1)
+download automatically on first use. The
+[five LoRA voices](https://huggingface.co/kova-ai/kova-tts-1-voices) are a separate download;
+set `KOVA_LORA_DIR` to their local directory to enable them.
+[Installation](installation.md) covers downloads, local paths, and offline use.
 
-**The license is undecided.** [`LICENSE`](https://github.com/evalabs-ai/kova-tts/blob/main/LICENSE)
-and [`LICENSE-WEIGHTS`](https://github.com/evalabs-ai/kova-tts/blob/main/LICENSE-WEIGHTS) are
-placeholders that grant nothing. Nothing in these docs asserts a license, and you should not
-assume one.
+**Research and non-commercial use.** Kova-provided code, base weights, and documentation
+are governed by the [main license](https://github.com/evalabs-ai/kova-tts/blob/main/LICENSE).
+The pretrained LoRA voices also require their
+[Voice Package Supplement](https://huggingface.co/kova-ai/kova-tts-1-voices/blob/main/LICENSE-SUPPLEMENT)
+and [NOTICE](https://huggingface.co/kova-ai/kova-tts-1-voices/blob/main/NOTICE).
+Commercial use requires a separate written license. Third-party components retain their
+own terms; see [component notices](https://github.com/evalabs-ai/kova-tts/blob/main/NOTICE).
 
 ## What it does
 
@@ -93,8 +97,10 @@ Everything here runs locally, on your own GPU. The same model, run by the people
 repository, is also hosted at [kova.ai](https://kova.ai): a demo you can use in the browser
 without setting any of this up, and an API for running it in production, including commercially.
 
-Those are the terms of that service, and only of that service. They grant nothing for the code
-or the weights here, whose licenses are still undecided.
+Those are the terms of that service. The code and model downloads are governed separately
+by the Research and Non-Commercial Model License and, for pretrained voices, the supplement.
+
+Built with [Kova TTS](https://kova.ai/text-to-speech). Built with Llama.
 
 ## Where to go next
 

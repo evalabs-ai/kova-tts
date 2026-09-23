@@ -345,7 +345,7 @@ def _convert(cls: type, key: str, value: Any, root: Path, *, prefix: str) -> Any
     if key in _PATH_FIELDS and prefix == "":
         return _resolve(value, root, key)
     if key == "model":
-        # A Hub id ("kova-ai/kova-tts-1b") is left alone; an explicitly relative path is not.
+        # A Hub id ("kova-ai/kova-tts-1") is left alone; an explicitly relative path is not.
         text = str(value)
         return str(_resolve(text, root, key)) if text.startswith((".", "~")) else text
     if key in ("target_modules", "modules_to_save", "tags"):

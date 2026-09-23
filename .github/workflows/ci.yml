@@ -16,7 +16,12 @@ jobs:
           enable-cache: true
 
       - name: Install
-        run: uv sync --all-extras
+        run: uv sync --extra server --extra demo --extra data --extra finetune
+
+      - name: Package licenses
+        run: |
+          uv build --all-packages
+          uv run python scripts/check_package_licenses.py dist
 
       - name: Lint
         run: |

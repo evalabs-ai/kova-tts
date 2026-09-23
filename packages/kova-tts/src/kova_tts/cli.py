@@ -255,7 +255,7 @@ def _hub_call(call: Callable[[], str], *, what: str) -> str:
             f"Could not download {what}: {type(exc).__name__}: {exc}\n"
             f"  - the released weights may not be public yet; set KOVA_HUB_REPO to the "
             f"repository you have access to,\n"
-            f"  - or run `huggingface-cli login` if it is gated,\n"
+            f"  - or run `hf auth login` if it is private or gated,\n"
             f"  - or point KOVA_MODEL_PATH / KOVA_CODEC_PATH at local checkpoints and skip the "
             f"download entirely (`kova-tts paths` shows what resolved)."
         ) from exc

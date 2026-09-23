@@ -130,10 +130,10 @@ class TestMergeHelpers:
         adapter = tmp_path / "adapter"
         adapter.mkdir()
         (adapter / "adapter_config.json").write_text(
-            json.dumps({"base_model_name_or_path": "kova-ai/kova-tts-1b", "r": 64}),
+            json.dumps({"base_model_name_or_path": "kova-ai/kova-tts-1", "r": 64}),
             encoding="utf-8",
         )
-        assert merge.base_model_of(adapter) == "kova-ai/kova-tts-1b"
+        assert merge.base_model_of(adapter) == "kova-ai/kova-tts-1"
 
     def test_a_directory_that_is_not_an_adapter_says_so(self, tmp_path):
         with pytest.raises(FileNotFoundError, match="not a saved peft adapter"):

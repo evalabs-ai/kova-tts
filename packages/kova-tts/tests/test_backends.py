@@ -60,7 +60,7 @@ class TestIsMLXArtifact:
     def test_a_hub_repo_id_is_not(self):
         # Answering would mean downloading a config to decide which backend does the
         # downloading. A repo id is assumed unconverted.
-        assert not backends.is_mlx_artifact("kova-ai/kova-tts-1b")
+        assert not backends.is_mlx_artifact("kova-ai/kova-tts-1")
 
     def test_an_unreadable_config_is_not(self, tmp_path):
         directory = tmp_path / "broken"

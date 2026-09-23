@@ -1,7 +1,24 @@
-PLACEHOLDER — the model weights license has not been chosen yet.
+Kova TTS model weights
 
-This file will cover the released checkpoints (the LM, the codec, and the bundled
-voice adapters), which are distributed from the Hugging Face Hub rather than from
-this repository.
+The base model and codec are distributed at:
+https://huggingface.co/kova-ai/kova-tts-1
 
-Source code is covered separately by LICENSE.
+The Kova-provided base-model materials are governed by the Research and
+Non-Commercial Model License in LICENSE. A complete copy also accompanies the
+Hugging Face base-model repository.
+
+The five pretrained LoRA voices are distributed separately at:
+https://huggingface.co/kova-ai/kova-tts-1-voices
+
+Those voices are governed by all three files in that repository:
+  LICENSE             Research and Non-Commercial Model License
+  LICENSE-SUPPLEMENT  Voice Package Supplement, including Schedule A
+  NOTICE              Dataset notices, conditions, and attributions
+
+Redistributions of the voice materials or derived models must include complete,
+unmodified copies of those three documents, including when a voice is packaged
+individually. Third-party components retain their separate terms.
+
+This file explains where the terms are located; it does not replace them or grant
+additional rights. Commercial use requires a separate written commercial license.
+Questions: legal@evalabs.ai

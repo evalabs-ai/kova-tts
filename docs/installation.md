@@ -10,8 +10,8 @@
   real time rather than several times it. The code runs on CPU too — the tests do — but
   generation is far slower than real time there, so a CPU box is for development, not for
   listening.
-- Checkpoints on disk. See [Getting the weights](#getting-the-weights); this is the step that
-  currently needs the most attention.
+- Model weights from Hugging Face, downloaded automatically or provided locally.
+  See [Getting the weights](#getting-the-weights).
 
 ### Choosing a GPU on a multi-GPU machine
 
@@ -57,11 +57,12 @@ Each extra is a feature you may not want. Install the ones you need:
 
 ```bash
 uv sync --extra server            # one extra
-uv sync --all-extras              # everything
+uv sync --extra server --extra demo --extra data --extra finetune
 ```
 
-`uv sync` prunes as well as installs, so `uv sync --extra demo` after `uv sync --all-extras`
-removes the other extras again. Name every extra you want in one command.
+On Apple Silicon, add `--extra mlx` for the MLX backend. This extra is not available on Linux.
+`uv sync` prunes as well as installs: switching to `uv sync --extra demo` removes other extras.
+Name every extra you want in one command.
 
 `peft` is a base dependency rather than part of `finetune`, because loading a LoRA voice is an
 inference feature — `--voice` works on a plain `uv sync`.
@@ -77,42 +78,53 @@ Four artifacts. Only the first two are always needed.
 | WavLM | A `microsoft/wavlm-large` directory or repo id | `KOVA_WAVLM_PATH` | Encoding audio: cloning, dataset prep |
 | LoRA voices | Directory with one subdirectory per voice | `KOVA_LORA_DIR` | `--voice` |
 
-Each resolves in the same order: the value you passed in code or on the command line, then the
-environment variable (read from the nearest `.env`), then the Hugging Face Hub.
+The model, codec, and WavLM resolve in the same order: the value you passed in code or on the
+command line, then the environment variable (read from the nearest `.env`), then the Hugging
+Face Hub. LoRA voices are resolved from a configured local directory.
 
-!!! warning "The Hub repository does not exist yet"
+The base model and codec are hosted in
+[`kova-ai/kova-tts-1`](https://huggingface.co/kova-ai/kova-tts-1). They download automatically
+on first use. To prefetch them, including the repository's legal documents:
 
-    `kova-ai/kova-tts-1b` has not been published. If you leave `KOVA_MODEL_PATH` and
-    `KOVA_CODEC_PATH` unset, every resolution falls through to the Hub and you get a 404:
+```bash
+uv run kova-tts download
+```
 
-    ```
-    $ kova-tts paths
-    config    no .env found
-    model     kova-ai/kova-tts-1b
-    wavlm     microsoft/wavlm-large
-    codec     unavailable: 404 Client Error.
-              Repository Not Found for url: https://huggingface.co/kova-ai/kova-tts-1b/...
-    loras     not configured
-    voices    none
-    ```
+WavLM downloads separately from `microsoft/wavlm-large` when encoding audio is needed.
+Use `uv run kova-tts download --wavlm` to prefetch it as well.
 
-    Point the variables at local checkpoints. `kova-tts download` cannot help until the
-    repository is public — it fails with the same 404 and prints the same advice.
+For a private or gated repository, authenticate with `uv run hf auth login` using an account
+that has access. Public, ungated downloads do not require a login.
 
-Copy the template and fill in the paths you have:
+Download the voice package separately, retaining its license files:
+
+```bash
+uv run hf download kova-ai/kova-tts-1-voices --local-dir ./voices
+export KOVA_LORA_DIR="$PWD/voices"
+```
+
+The voice folders are `bdl`, `slt`, `jmk`, `awb`, and `Kathleen`. The base model speaks
+without an adapter; use one of these names with `--voice` after installing the voices.
+Do not copy an adapter into a standalone distribution without the voice package's
+`LICENSE`, `LICENSE-SUPPLEMENT`, and complete `NOTICE`.
+
+### Using local checkpoints
+
+To use files already on disk, copy the template and set their paths:
 
 ```bash
 cp .env.example .env
 ```
 
 ```bash title=".env"
-KOVA_MODEL_PATH=/models/kova-tts-1b
+KOVA_MODEL_PATH=/models/kova-tts-1
 KOVA_CODEC_PATH=/models/kova/codec.pt
 KOVA_WAVLM_PATH=/models/wavlm-large
 KOVA_LORA_DIR=/models/kova/voices
 ```
 
-`.env` is gitignored. Leave any line blank and that artifact falls back to the Hub.
+`.env` is gitignored. The model, codec, and WavLM fall back to their Hub repositories
+when unset. LoRA voices need a local `KOVA_LORA_DIR`; they are not downloaded automatically.
 
 ## Check that it worked
 
@@ -122,7 +134,7 @@ uv run kova-tts paths
 
 ```
 config    /home/you/kova-tts/.env
-model     /models/kova-tts-1b
+model     /models/kova-tts-1
 wavlm     /models/wavlm-large
 codec     /models/kova/codec.pt
 loras     /models/kova/voices
@@ -146,8 +158,8 @@ faster-whisper; the CLI imports each subcommand's dependencies inside that subco
 
 ## Offline and container installs
 
-Once the repository is published, `kova-tts download` prefetches into the local Hub cache so a
-later run needs no network:
+`kova-tts download` prefetches into the local Hub cache so a later run can use the
+cached files:
 
 ```bash
 uv run kova-tts download            # LM and codec
@@ -156,14 +168,14 @@ uv run kova-tts download --wavlm    # and WavLM, ~1.2 GB, only needed to encode 
 
 Artifacts already pointed at a local path by `.env` are reported and skipped rather than
 downloaded a second time. `--cache-dir` fills a specific cache, `--token` authenticates against
-a gated repository, and `--repo` overrides the source.
+a private or gated repository, and `--repo` overrides the source.
 
 For a container image, see [Docker](docker.md).
 
 ## Development
 
 ```bash
-uv sync --all-extras
+uv sync --extra server --extra demo --extra data --extra finetune
 uv run pytest -m "not gpu and not weights"    # no GPU and no checkpoints needed
 uv run pytest                                 # everything, including GPU and weight-backed tests
 uv run ruff check . && uv run ruff format .

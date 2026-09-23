@@ -689,7 +689,7 @@ class TestDownload:
         assert cli.main(["download"]) == 0
         out = capsys.readouterr().out
         assert "model" in out and "codec" in out and "total" in out
-        assert ("snapshot", "kova-ai/kova-tts-1b") in asked
+        assert ("snapshot", "kova-ai/kova-tts-1") in asked
 
     def test_local_artifacts_are_skipped(self, monkeypatch, capsys):
         fake_module(

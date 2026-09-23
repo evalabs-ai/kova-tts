@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -7,6 +7,8 @@ name = "kova-codec"
 version = "0.1.0"
 description = "Neural audio codec for Kova TTS: 32 kHz waveforms <-> 80 tok/s discrete codes"
 readme = "README.md"
+license = "LicenseRef-Kova-Research-NonCommercial"
+dynamic = ["license-files"]
 requires-python = ">=3.10"
 dependencies = [
     # torch and torchaudio must come from the same CUDA build; mismatched wheels
@@ -23,3 +25,11 @@ dependencies = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/kova_codec"]
+
+# The shared hook stages root legal files in the ignored build directory. Include
+# its implementation in sdists so wheel builds also work outside this workspace.
+[tool.hatch.metadata.hooks.custom]
+path = "hatch_build.py"
+
+[tool.hatch.build.targets.sdist]
+artifacts = ["build/legal/**", "build/_license_metadata.py"]

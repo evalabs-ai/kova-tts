@@ -1,6 +1,7 @@
 """Anti-aliased activation wrapper.
 
 Adapted from https://github.com/junjun3518/alias-free-torch (Apache 2.0), via BigVGAN.
+Modified by Kova AI for integration with Kova TTS.
 """
 
 from __future__ import annotations
