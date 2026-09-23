@@ -135,6 +135,13 @@ your own hardware before relying on a number. [Details](docs/index.md#performanc
 
 ## Deliberate non-features
 
+This is a model and local inference release, not a production server release. The included
+server is intended for local use, experimentation, and integration development. Production
+deployments need their own access control, concurrency management, and serving optimizations.
+With production serving optimizations on NVIDIA H100 GPUs, Kova achieves under 100 ms time
+to first audio in our optimized serving system. The local runtime included here is a
+separate implementation with the measurements reported above.
+
 No text normalization, no word timestamps, one request at a time. Plain PyTorch — a static KV
 cache and a CUDA-graph decode step at batch 1. Each has a reason — see
 [Architecture](docs/architecture.md#deliberate-non-features) before filing a bug.

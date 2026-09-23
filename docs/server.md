@@ -4,6 +4,11 @@ A local HTTP server with three ways to get audio out — one request/one file, S
 and an incremental WebSocket session — plus an [OpenAI-compatible
 endpoint](#openai-compatible-api) for tools that already speak that API.
 
+This server is for local use, experimentation, and integration development. It is not a
+production server release. Production deployments need their own access control,
+concurrency management, and serving optimizations. See [Performance](index.md#performance)
+for local-runtime benchmarks and optimized H100 serving performance.
+
 ```bash
 uv sync --extra server
 uv run kova-tts serve

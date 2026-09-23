@@ -51,6 +51,10 @@ own terms; see [component notices](https://github.com/evalabs-ai/kova-tts/blob/m
 
 ## What it deliberately does not do
 
+This is a model and local inference release, not a production server release. The included
+server supports local use, experimentation, and integration development. Production
+deployments need their own access control, concurrency management, and serving optimizations.
+
 None of these are missing features. Each is a decision with a reason, and
 [Architecture](architecture.md#deliberate-non-features) gives the reasons.
 
@@ -63,6 +67,10 @@ None of these are missing features. Each is a decision with a reason, and
   story, and it lives in one readable file.
 
 ## Performance
+
+With production serving optimizations on NVIDIA H100 GPUs, Kova achieves under 100 ms
+time to first audio in our optimized serving system. The local runtime included in this
+release is a separate implementation; its measurements are reported below.
 
 Measured on this repository, batch 1, bfloat16, on an RTX 5090 with a 4096-token KV cache.
 Reproduce them before relying on them; hardware and driver versions move these numbers a lot.
