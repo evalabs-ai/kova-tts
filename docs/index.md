@@ -3,12 +3,12 @@
 Expressive text-to-speech with voice cloning, LoRA finetuning, and a local server.
 
 A Llama-3.2-1B backbone generates discrete audio codes at 80 per second. A neural codec decodes
-those codes to 32 kHz mono speech. Both halves live in this repository.
+those codes to 48 kHz mono speech. Both halves live in this repository.
 
 | Package | Role |
 |---|---|
 | [`kova-tts`](https://github.com/evalabs-ai/kova-tts/tree/main/packages/kova-tts) | The model: inference, voice cloning, server, LoRA finetuning |
-| [`kova-codec`](https://github.com/evalabs-ai/kova-tts/tree/main/packages/kova-codec) | The codec: 32 kHz waveforms ↔ codes at 80 tokens/second |
+| [`kova-codec`](https://github.com/evalabs-ai/kova-tts/tree/main/packages/kova-codec) | The codec: 32 kHz waveforms → codes at 80 tokens/second → 48 kHz waveforms |
 
 ```python
 from kova_tts import KovaTTS
@@ -40,7 +40,7 @@ own terms; see [component notices](https://github.com/evalabs-ai/kova-tts/blob/m
 
 | Capability | Where |
 |---|---|
-| Synthesize text to a 32 kHz WAV | [Quickstart](quickstart.md) |
+| Synthesize text to a 48 kHz WAV | [Quickstart](quickstart.md) |
 | Stream audio while it is still being generated | [Quickstart](quickstart.md#streaming) |
 | Clone a voice from a few seconds of reference audio | [Voice cloning](voice-cloning.md) |
 | Train a per-voice LoRA adapter | [Finetuning](finetuning.md) |

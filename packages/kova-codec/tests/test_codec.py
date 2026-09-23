@@ -7,8 +7,18 @@ import math
 import numpy as np
 import pytest
 import torch
+import torchaudio
 
-from kova_codec import CODE_MAX, CODE_MIN, HOP_LENGTH, SAMPLE_RATE, KovaCodec
+from kova_codec import (
+    CODE_MAX,
+    CODE_MIN,
+    HOP_LENGTH,
+    OUTPUT_HOP_LENGTH,
+    OUTPUT_SAMPLE_RATE,
+    SAMPLE_RATE,
+    TOKEN_RATE,
+    KovaCodec,
+)
 
 # The streaming window kova_tts.engine.decoder uses, in codes: three frames of conv context on
 # each end, nine frames of lookahead decoded but not emitted, thirty-one frames emitted per call.
@@ -48,6 +58,15 @@ def test_codes_must_be_a_recognised_container():
 
 @pytest.mark.weights
 @pytest.mark.gpu
+def test_the_checkpoint_decides_the_output_rate(codec: KovaCodec):
+    """Codes stay on the 80/s grid; the shipped decoder turns each into 600 samples at 48 kHz."""
+    assert codec.sample_rate == OUTPUT_SAMPLE_RATE
+    assert codec.hop_length == OUTPUT_HOP_LENGTH
+    assert codec.sample_rate == codec.hop_length * TOKEN_RATE
+
+
+@pytest.mark.weights
+@pytest.mark.gpu
 def test_encode_produces_one_code_per_hop_inside_the_codebook(codec: KovaCodec, synthetic_wav):
     codes = codec.encode(synthetic_wav)
     assert codes.shape == (math.ceil(synthetic_wav.numel() / HOP_LENGTH),)
@@ -78,9 +97,11 @@ def test_round_trip_reconstructs_real_speech(codec: KovaCodec, local_speech_wav)
     codes = codec.encode(local_speech_wav)
     audio = codec.decode(codes)
 
-    assert audio.shape == (codes.numel() * HOP_LENGTH,)
-    assert audio.numel() == pytest.approx(local_speech_wav.numel(), abs=HOP_LENGTH)
+    assert audio.shape == (codes.numel() * codec.hop_length,)
     assert audio.abs().max() <= 1.0
+    # Back onto the input's 32 kHz grid, so the two can be compared sample for sample.
+    audio = torchaudio.functional.resample(audio.float(), codec.sample_rate, SAMPLE_RATE)
+    assert audio.numel() == pytest.approx(local_speech_wav.numel(), abs=HOP_LENGTH)
 
     # Calibrated on this checkpoint at fp32: a real round trip lands near 0.53 log-mel L1
     # and 0.99 envelope correlation, while noise of the same RMS lands at 3.3 and 0.0 and
@@ -120,8 +141,8 @@ def test_streaming_windows_match_a_single_decode(codec: KovaCodec, synthetic_wav
                 return_lstm_state=None if last else WINDOW,
                 conv_padding=CONV_PADDING,
             )
-        start = 0 if pos == 0 else LOOKAHEAD * HOP_LENGTH
-        end = audio.shape[1] if last else (LOOKAHEAD + WINDOW) * HOP_LENGTH
+        start = 0 if pos == 0 else LOOKAHEAD * codec.hop_length
+        end = audio.shape[1] if last else (LOOKAHEAD + WINDOW) * codec.hop_length
         pieces.append(audio[:, start:end])
         if last:
             break
@@ -141,7 +162,7 @@ def test_decode_only_codec_decodes_but_refuses_to_encode(checkpoint_path, cuda_d
     codec = KovaCodec.from_checkpoint(checkpoint_path, device=cuda_device, decode_only=True)
     assert codec.dtype == torch.float16  # decode-only on CUDA defaults to fp16
     audio = codec.decode(torch.randint(CODE_MIN, CODE_MAX + 1, (40,)))
-    assert audio.shape == (40 * HOP_LENGTH,)
+    assert audio.shape == (40 * codec.hop_length,)
     with pytest.raises(RuntimeError, match="decode-only"):
         codec.encode(torch.zeros(SAMPLE_RATE))
 

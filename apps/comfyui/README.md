@@ -86,4 +86,4 @@ makes the model try to speak words the audio does not contain.
   them in parallel.
 - Sampling defaults are the tuned preset. Cloned voices sample the same way, but the reference
   clip is generated before your text, so give `max_tokens` room (3500 is the preset).
-- Output audio is 32 kHz mono.
+- Output audio is 48 kHz mono.

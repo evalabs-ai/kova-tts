@@ -32,7 +32,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from kova_codec.constants import SAMPLE_RATE
+from kova_codec.constants import OUTPUT_SAMPLE_RATE, SAMPLE_RATE
 
 pytestmark = [pytest.mark.gpu, pytest.mark.weights]
 
@@ -154,7 +154,7 @@ def _session(client, texts, **config) -> tuple[bytes, list[int], float]:
 
 def _wav_samples(payload: bytes) -> np.ndarray:
     audio, rate = sf.read(io.BytesIO(payload), dtype="float32")
-    assert rate == SAMPLE_RATE
+    assert rate == OUTPUT_SAMPLE_RATE
     return audio
 
 
@@ -173,7 +173,7 @@ def test_health_reports_a_cuda_device(client):
     body = client.get("/health").json()
     assert body["model_loaded"] is True
     assert body["device"].startswith("cuda")
-    assert body["sample_rate"] == SAMPLE_RATE
+    assert body["sample_rate"] == OUTPUT_SAMPLE_RATE
 
 
 def test_synthesis_returns_real_audio(client):
@@ -185,7 +185,7 @@ def test_synthesis_returns_real_audio(client):
     assert response.headers["content-type"] == "audio/wav"
 
     audio = _wav_samples(response.content)
-    seconds = audio.size / SAMPLE_RATE
+    seconds = audio.size / OUTPUT_SAMPLE_RATE
     print(f"\n[server] POST /v1/tts: {seconds:.2f} s of audio in {elapsed:.2f} s")
 
     assert seconds > MIN_SECONDS
@@ -354,7 +354,7 @@ def test_a_voice_that_does_not_exist_is_a_404(client):
 def reference(tts) -> np.ndarray:
     """The reference clip, rendered by the model itself so that nothing has to be committed."""
     wav = tts.generate(REFERENCE_TEXT, None, params=None, seed=SEED)
-    assert wav.size / SAMPLE_RATE > 1.0, "the reference came out too short to clone from"
+    assert wav.size / OUTPUT_SAMPLE_RATE > 1.0, "the reference came out too short to clone from"
     return wav
 
 
@@ -363,14 +363,14 @@ def reference_audio(reference) -> dict:
     """That clip as a client with only a recording would send it."""
     from kova_tts.audio import to_wav_bytes
 
-    encoded = base64.b64encode(to_wav_bytes(reference, SAMPLE_RATE)).decode("ascii")
+    encoded = base64.b64encode(to_wav_bytes(reference, OUTPUT_SAMPLE_RATE)).decode("ascii")
     return {"transcript": REFERENCE_TEXT, "audio": encoded}
 
 
 @pytest.fixture(scope="module")
 def reference_encoded(tts, reference) -> dict:
     """The same clip as a client that encoded it once already would send it."""
-    voice = tts.clone(reference, transcript=REFERENCE_TEXT)
+    voice = tts.clone(reference, transcript=REFERENCE_TEXT, sample_rate=tts.sample_rate)
     return {"transcript": REFERENCE_TEXT, "codes": list(voice.ref_codes)}
 
 
@@ -419,7 +419,7 @@ def test_a_cloned_session_says_the_text_and_not_the_reference(client, reference,
     """
     payload, opened, echo = _cloned(client, reference_audio)
     streamed = _pcm_samples(payload)
-    seconds = streamed.size / SAMPLE_RATE
+    seconds = streamed.size / OUTPUT_SAMPLE_RATE
     print(
         f"\n[server] WS cloned from audio: opened in {opened:.2f} s, first frame at "
         f"{echo['first_audio']:.2f} s, {seconds:.2f} s of audio"
@@ -427,7 +427,9 @@ def test_a_cloned_session_says_the_text_and_not_the_reference(client, reference,
 
     assert seconds > MIN_SECONDS
     assert echo["reference"]["codes"] > 0
-    head = min(int(echo["reference"]["seconds"] * SAMPLE_RATE), streamed.size, reference.size)
+    head = min(
+        int(echo["reference"]["seconds"] * OUTPUT_SAMPLE_RATE), streamed.size, reference.size
+    )
     correlation = _correlation(streamed[:head], reference[:head])
     print(f"[server] cloned head vs the reference clip: {correlation:.3f}")
     assert abs(correlation) < 0.2, (
@@ -456,7 +458,7 @@ def test_a_cloned_session_joins_its_flushes_without_a_step(client, reference_enc
     """Three flushes in a cloned voice, at a rate that is not the codec's."""
     payload, _, _ = _cloned(client, reference_encoded, FLUSH_TEXTS)
     streamed = _pcm_samples(payload)
-    assert streamed.size / SAMPLE_RATE > MIN_SECONDS
+    assert streamed.size / OUTPUT_SAMPLE_RATE > MIN_SECONDS
     steps = np.abs(np.diff(streamed))
     assert float(steps.max()) <= 10 * float(np.percentile(steps, 99.9))
 
@@ -485,7 +487,8 @@ def test_a_reference_recording_of_your_own(client, tts):
     correlation = _correlation(streamed, clip)
     print(
         f"[server] cloned from a local recording: {echo['reference']['seconds']:.1f} s reference, "
-        f"{streamed.size / SAMPLE_RATE:.2f} s of audio, correlating {correlation:.3f} with the clip"
+        f"{streamed.size / OUTPUT_SAMPLE_RATE:.2f} s of audio, correlating {correlation:.3f} "
+        "with the clip"
     )
     assert streamed.size > 0
     assert abs(correlation) < 0.2
@@ -522,7 +525,7 @@ def test_the_openai_endpoint_returns_real_audio(client):
     seconds = audio.size / rate
     print(f"\n[server] POST /v1/audio/speech mp3: {seconds:.2f} s of audio in {elapsed:.2f} s")
 
-    assert rate == SAMPLE_RATE
+    assert rate == OUTPUT_SAMPLE_RATE
     assert seconds > MIN_SECONDS
     assert float(np.sqrt(np.mean(audio**2))) > 0.001  # speech, not a buffer of zeros
 
@@ -530,5 +533,5 @@ def test_the_openai_endpoint_returns_real_audio(client):
     assert streamed.status_code == 200
     assert streamed.headers["content-type"] == "audio/wav"
     wav, wav_rate = sf.read(io.BytesIO(streamed.content), dtype="float32")
-    assert wav_rate == SAMPLE_RATE
+    assert wav_rate == OUTPUT_SAMPLE_RATE
     assert wav.size / wav_rate > MIN_SECONDS

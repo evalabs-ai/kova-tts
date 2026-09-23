@@ -1,9 +1,10 @@
 """The boundary between ComfyUI's ``AUDIO`` type and this project's waveforms.
 
 ComfyUI passes audio as ``{"waveform": tensor [B, C, T], "sample_rate": int}``, batched and
-often at whatever rate the file had. ``kova_tts`` works in 1-D float32 numpy at 32 kHz and
-nothing else. Both conversions live here, in one small module with no ComfyUI imports, so that
-no ComfyUI shape ever reaches the engine and none of this needs ComfyUI installed to be tested.
+often at whatever rate the file had. ``kova_tts`` works in 1-D float32 numpy: it takes 32 kHz
+in, for the encoder, and gives 48 kHz out. Both conversions live here, in one small module with
+no ComfyUI imports, so that no ComfyUI shape ever reaches the engine and none of this needs
+ComfyUI installed to be tested.
 """
 
 from __future__ import annotations
@@ -12,11 +13,11 @@ from typing import Any
 
 import numpy as np
 
-from kova_codec.constants import SAMPLE_RATE
+from kova_codec.constants import OUTPUT_SAMPLE_RATE, SAMPLE_RATE
 from kova_tts import audio as audio_io
 
 
-def to_comfy_audio(wav: np.ndarray, sample_rate: int = SAMPLE_RATE) -> dict[str, Any]:
+def to_comfy_audio(wav: np.ndarray, sample_rate: int = OUTPUT_SAMPLE_RATE) -> dict[str, Any]:
     """Waveform -> an ``AUDIO`` dict: one batch item, one channel.
 
     The tensor is built on the CPU. ComfyUI's own audio nodes expect that, and a waveform that

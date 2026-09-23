@@ -1,7 +1,7 @@
 # kova-tts
 
 Expressive text-to-speech: a Llama-3.2-1B backbone that emits discrete audio codes, decoded to
-32 kHz waveforms by [kova-codec](../kova-codec).
+48 kHz waveforms by [kova-codec](../kova-codec).
 
 ```python
 from kova_tts import KovaTTS

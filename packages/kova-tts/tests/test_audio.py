@@ -11,7 +11,7 @@ import soundfile as sf
 import torch
 import torchaudio
 
-from kova_codec.constants import SAMPLE_RATE, TARGET_LUFS
+from kova_codec.constants import OUTPUT_SAMPLE_RATE, SAMPLE_RATE, TARGET_LUFS
 from kova_tts import audio
 
 #: Rate pairs the library is expected to serve: the model's own 32 kHz down to a voice-agent
@@ -175,7 +175,7 @@ class TestStreamingResampler:
 class TestLoadAudio:
     def test_reads_back_what_was_written(self, tmp_path):
         wav = sine(0.5)
-        path = audio.save_wav(tmp_path / "a.wav", wav)
+        path = audio.save_wav(tmp_path / "a.wav", wav, SAMPLE_RATE)
         loaded = audio.load_audio(path)
         assert loaded.dtype == np.float32
         assert loaded.size == wav.size
@@ -267,7 +267,7 @@ class TestSerialization:
     def test_wav_bytes_are_a_readable_file(self):
         wav = sine(0.5)
         data, rate = sf.read(io.BytesIO(audio.to_wav_bytes(wav)), dtype="float32")
-        assert rate == SAMPLE_RATE
+        assert rate == OUTPUT_SAMPLE_RATE
         assert np.allclose(data, wav, atol=1e-4)
 
     def test_wav_bytes_carry_the_requested_rate(self):
@@ -635,7 +635,7 @@ class TestMpegFrameLength:
 class TestTrimLeading:
     def test_drops_exactly_the_requested_duration(self):
         wav = sine(2.0)
-        assert audio.trim_leading(wav, 0.5).size == wav.size - SAMPLE_RATE // 2
+        assert audio.trim_leading(wav, 0.5).size == wav.size - OUTPUT_SAMPLE_RATE // 2
 
     def test_zero_and_negative_durations_are_no_ops(self):
         wav = sine(0.5)
@@ -647,4 +647,4 @@ class TestTrimLeading:
 
     def test_keeps_the_tail_samples(self):
         wav = np.arange(10, dtype=np.float32)
-        assert np.array_equal(audio.trim_leading(wav, 4 / SAMPLE_RATE), wav[4:])
+        assert np.array_equal(audio.trim_leading(wav, 4 / OUTPUT_SAMPLE_RATE), wav[4:])

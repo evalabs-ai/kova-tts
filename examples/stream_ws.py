@@ -21,7 +21,7 @@ session is already speaking; it only asks for more endings than the reply has.
 Frames, in the order they occur. Client to server::
 
     {"start_context": {"voice": null, "reference": null, "seed": null, "sampling": null,
-                       "response_format": {"encoding": "pcm", "sample_rate": 32000}}}
+                       "response_format": {"encoding": "pcm", "sample_rate": 48000}}}
     {"send_text": "some text "}          repeat as often as you like
     {"flush": true, "flush_id": "s0"}    end the turn: finish everything sent so far
     {"close_context": true, "flush_id": "end"}   finish the rest, then end the session
@@ -105,7 +105,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--rate",
         type=int,
         default=None,
-        help="output sample rate; the model's own 32000 by default. 16000 for a voice agent",
+        help="output sample rate; the model's own 48000 by default. 16000 for a voice agent",
     )
     parser.add_argument("--out", default=None, help="where to write the audio")
     return parser.parse_args(argv)

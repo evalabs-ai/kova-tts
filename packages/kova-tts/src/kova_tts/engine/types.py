@@ -15,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
-from kova_codec.constants import CODE_MAX, CODE_MIN, SAMPLE_RATE, codes_to_seconds
+from kova_codec.constants import CODE_MAX, CODE_MIN, OUTPUT_SAMPLE_RATE, codes_to_seconds
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,7 +145,7 @@ class AudioFrame:
     """
 
     samples: np.ndarray  # float32 mono, shape [n]
-    sample_rate: int = SAMPLE_RATE
+    sample_rate: int = OUTPUT_SAMPLE_RATE
     is_final: bool = False
 
     def __post_init__(self) -> None:

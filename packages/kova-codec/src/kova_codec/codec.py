@@ -1,4 +1,4 @@
-"""The codec: 32 kHz waveforms <-> a single stream of discrete codes at 80 tokens/second."""
+"""The codec: 32 kHz waveforms -> one stream of discrete codes at 80 tokens/second -> 48 kHz."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from kova_codec.constants import HOP_LENGTH, SAMPLE_RATE, WAVLM_MODEL
+from kova_codec.constants import HOP_LENGTH, TOKEN_RATE, WAVLM_MODEL
 from kova_codec.devices import default_device, is_accelerator
 from kova_codec.vq.codec_decoder import CodecDecoder
 from kova_codec.vq.codec_encoder import CodecEncoder
@@ -31,6 +31,12 @@ class KovaCodec(torch.nn.Module):
     Encoding fuses WavLM-large layer-23 features with acoustic features before quantizing to
     a single codebook of 8192 entries. Decoding needs neither, so a TTS process that only
     ever calls :meth:`decode` can skip WavLM entirely (see :meth:`from_checkpoint`).
+
+    The two halves run at different rates. :meth:`encode` always takes 32 kHz
+    (:data:`~kova_codec.constants.SAMPLE_RATE`); :meth:`decode` produces :attr:`sample_rate`,
+    which the checkpoint decides -- 48 kHz and :attr:`hop_length` 600 for the shipped decoder,
+    32 kHz and 400 for the older one. Both sit on the same 80 codes/second grid, so a code
+    sequence decodes with either.
 
     Prefer :meth:`from_checkpoint` over calling this constructor directly.
 
@@ -58,8 +64,6 @@ class KovaCodec(torch.nn.Module):
     ) -> None:
         super().__init__()
 
-        # Read by kova_tts.engine.decoder.StreamingDecoder, which takes a codec and no config.
-        self.sample_rate = SAMPLE_RATE
         self.device = torch.device(device) if device is not None else default_device()
         self._encode_enabled = wavlm_model_name is not None
         if dtype is None:
@@ -96,13 +100,26 @@ class KovaCodec(torch.nn.Module):
             use_rnn=_cfg_or(decoder_cfg, "use_rnn", True),
             rnn_bidirectional=_cfg_node(decoder_cfg, "rnn_bidirectional") or False,
             rnn_num_layers=_cfg_node(decoder_cfg, "rnn_num_layers") or 2,
-            up_ratios=tuple(_cfg_node(decoder_cfg, "up_ratios") or (5, 5, 2, 2, 2, 2)),
+            up_ratios=tuple(_cfg_node(decoder_cfg, "up_ratios") or (5, 5, 2, 2, 2, 3)),
             dilations=tuple(_cfg_node(decoder_cfg, "dilations") or (1, 3, 9)),
             vq_num_quantizers=_cfg_node(decoder_cfg, "vq_num_quantizers") or 1,
             vq_dim=vq_dim,
             codebook_size=_cfg_node(decoder_cfg, "codebook_size") or 8192,
             codebook_dim=_cfg_node(decoder_cfg, "codebook_dim") or 8,
         )
+        if self._codec_encoder.hop_length != HOP_LENGTH:
+            raise ValueError(
+                f"Codec encoder hops {self._codec_encoder.hop_length} samples per code; "
+                f"this package is built around {HOP_LENGTH} at 32 kHz ({TOKEN_RATE} codes/s)."
+            )
+        # The decoder's hop is what sets the output rate: codes arrive at TOKEN_RATE either way,
+        # and each becomes `hop_length` samples. Read by kova_tts, which takes a codec and no
+        # config, so this is the one place the rate of decoded audio is known.
+        #: Samples of decoded audio per code.
+        self.hop_length = int(self._codec_decoder.hop_length)
+        #: Rate of decoded audio, in Hz.
+        self.sample_rate = TOKEN_RATE * self.hop_length
+
         self._semantic_encoder = SemanticEncoder(
             input_channels=ssl_dim, code_dim=ssl_dim, encode_channels=ssl_dim
         )
@@ -289,9 +306,9 @@ class KovaCodec(torch.nn.Module):
         return vq_emb.squeeze(0).cpu() if unbatched else vq_emb.cpu()
 
     def decode(self, speech_ids: Codes) -> torch.Tensor:
-        """Decode codes into a 32 kHz waveform: ``[T]`` -> ``[T * HOP_LENGTH]``.
+        """Decode codes into a waveform at :attr:`sample_rate`: ``[T]`` -> ``[T * hop_length]``.
 
-        Batched input ``[B, T]`` gives ``[B, T * HOP_LENGTH]``. This is the whole-utterance
+        Batched input ``[B, T]`` gives ``[B, T * hop_length]``. This is the whole-utterance
         path; for streaming, use :meth:`decode_with_lstm`.
         """
         speech_ids = _as_codes(speech_ids)
@@ -342,7 +359,7 @@ class KovaCodec(torch.nn.Module):
             conv_padding: Frames of context to trim off each end after the first conv.
 
         Returns:
-            ``(audio [B, T_out * HOP_LENGTH], lstm_state or None)``, where ``T_out`` is
+            ``(audio [B, T_out * hop_length], lstm_state or None)``, where ``T_out`` is
             ``T - 2 * conv_padding`` when ``conv_padding`` is set and ``T`` otherwise.
         """
         state_in: LSTMState | None = None

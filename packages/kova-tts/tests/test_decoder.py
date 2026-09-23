@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 import torch
 
-from kova_codec.constants import HOP_LENGTH
+from kova_codec.constants import HOP_LENGTH, OUTPUT_HOP_LENGTH
 from kova_tts.engine.decoder import (
     CONV_PADDING,
     LOOKAHEAD,
@@ -49,20 +49,20 @@ class TestWindowPlan:
         emitted = 0
         for plan in plan_windows(total):
             frames = (plan.stop - plan.start) - 2 * CONV_PADDING
-            stop = frames if plan.emit_stop is None else plan.emit_stop // HOP_LENGTH
-            emitted += stop - plan.emit_start // HOP_LENGTH
+            stop = frames if plan.emit_stop is None else plan.emit_stop // OUTPUT_HOP_LENGTH
+            emitted += stop - plan.emit_start // OUTPUT_HOP_LENGTH
         assert emitted == total
 
     def test_the_first_window_emits_its_lookahead_too(self):
         first = next(plan_windows(1000))
         assert first.emit_start == 0
-        assert first.emit_stop == (LOOKAHEAD + WINDOW) * HOP_LENGTH
+        assert first.emit_stop == (LOOKAHEAD + WINDOW) * OUTPUT_HOP_LENGTH
 
     def test_steady_state_windows_emit_one_window_each(self):
         plans = list(plan_windows(1000))
         for plan in plans[1:-1]:
-            assert plan.emit_start == LOOKAHEAD * HOP_LENGTH
-            assert plan.emit_stop == (LOOKAHEAD + WINDOW) * HOP_LENGTH
+            assert plan.emit_start == LOOKAHEAD * OUTPUT_HOP_LENGTH
+            assert plan.emit_stop == (LOOKAHEAD + WINDOW) * OUTPUT_HOP_LENGTH
             assert plan.advance == WINDOW
 
     def test_the_last_window_keeps_no_state_and_runs_to_the_end(self):
@@ -330,7 +330,9 @@ def test_priming_drops_the_reference_and_keeps_the_rest(codec, speech_codes):
     pieces = [decoder.push([c]) for c in target] + [decoder.finish()]
     primed = np.concatenate([p for p in pieces if p.size])
 
-    assert primed.size == len(target) * HOP_LENGTH
+    assert primed.size == len(target) * codec.hop_length
     # The primed decoder is warm, so what it emits is the tail of a whole-utterance decode.
     whole = decode_all(codec, speech_codes)
-    np.testing.assert_allclose(primed, whole[len(reference) * HOP_LENGTH :], rtol=0, atol=1e-2)
+    np.testing.assert_allclose(
+        primed, whole[len(reference) * codec.hop_length :], rtol=0, atol=1e-2
+    )

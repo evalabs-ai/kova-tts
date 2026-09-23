@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
-#: Waveforms are 32 kHz mono, float32 in [-1, 1].
+#: The encoder's input: 32 kHz mono, float32 in [-1, 1]. Reference clips and training audio
+#: are resampled to this rate before :meth:`~kova_codec.KovaCodec.encode`.
 SAMPLE_RATE = 32_000
 
-#: Samples consumed per code.
+#: Input samples consumed per code.
 HOP_LENGTH = 400
 
-#: Codes per second of audio: 32000 / 400 = 80.
+#: Codes per second of audio: 32000 / 400 = 80. Every decoder shares this grid.
 TOKEN_RATE = SAMPLE_RATE // HOP_LENGTH
+
+#: The decoder's output: 48 kHz, 600 samples per code. This is the rate of the shipped
+#: decoder; a checkpoint states its own, and :attr:`KovaCodec.sample_rate
+#: <kova_codec.KovaCodec.sample_rate>` on a loaded codec is the one to trust.
+OUTPUT_SAMPLE_RATE = 48_000
+OUTPUT_HOP_LENGTH = OUTPUT_SAMPLE_RATE // TOKEN_RATE
 
 #: Single codebook, 8192 entries. Codes are ints in [CODE_MIN, CODE_MAX].
 CODEBOOK_SIZE = 8192
