@@ -84,7 +84,7 @@ is not for is an error with a sentence explaining which file you want.
 `GET /health` reports both, because on this hardware they are not the same question:
 
 ```json
-{"status": "ok", "device": "mps", "backend": "mlx", "sample_rate": 32000}
+{"status": "ok", "device": "mps", "backend": "mlx", "sample_rate": 48000}
 ```
 
 The device is the codec's, and the codec is torch on Metal under either backend.

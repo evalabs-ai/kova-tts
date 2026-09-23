@@ -20,7 +20,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from kova_codec.constants import SAMPLE_RATE
+from kova_codec.constants import OUTPUT_SAMPLE_RATE
 from kova_tts import SamplingParams
 
 pytestmark = [pytest.mark.gpu, pytest.mark.weights]
@@ -187,11 +187,11 @@ def test_the_demo_streams_the_models_own_samples(demo: Any, engine: Any, demo_ur
     run = stream_once(demo_url + demo.STREAM_PATH, text=TEXT, seed=1234)
 
     audio = np.frombuffer(run["pcm"], dtype="<i2")
-    seconds = audio.size / SAMPLE_RATE
+    seconds = audio.size / OUTPUT_SAMPLE_RATE
     assert seconds > 2.0, "two sentences should be more than two seconds of speech"
     assert np.max(np.abs(audio)) > 1000, "that is silence"
     assert run["done"]["samples"] == audio.size
-    assert run["done"]["sample_rate"] == SAMPLE_RATE
+    assert run["done"]["sample_rate"] == OUTPUT_SAMPLE_RATE
 
     # Sample for sample, what the browser got is what the codec decoded.
     again = np.concatenate([frame.samples for frame in engine.stream(TEXT, seed=1234)])
@@ -234,12 +234,12 @@ def test_the_comfyui_node_generates_real_audio(comfy: Any, engine: Any) -> None:
     (audio,) = node.generate(engine, "Generated from a ComfyUI graph.", seed=99)
 
     waveform = audio["waveform"]
-    assert audio["sample_rate"] == SAMPLE_RATE
+    assert audio["sample_rate"] == OUTPUT_SAMPLE_RATE
     assert waveform.ndim == 3 and waveform.shape[:2] == (1, 1)
-    assert waveform.shape[2] / SAMPLE_RATE > 1.0
+    assert waveform.shape[2] / OUTPUT_SAMPLE_RATE > 1.0
     assert float(waveform.abs().max()) > 0.03, "that is silence"
 
     # Round-tripping through the boundary gives back exactly what the engine produced.
-    restored = comfy.audio.from_comfy_audio(audio)
+    restored = comfy.audio.from_comfy_audio(audio, OUTPUT_SAMPLE_RATE)
     assert restored.dtype == np.float32
     assert restored.size == waveform.shape[2]

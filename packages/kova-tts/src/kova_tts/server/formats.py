@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from kova_codec.constants import SAMPLE_RATE
+from kova_codec.constants import OUTPUT_SAMPLE_RATE
 from kova_tts import audio
 from kova_tts.server.errors import InvalidRequest
 
@@ -86,7 +86,7 @@ def media_type(fmt: str) -> str:
     return audio.content_type(fmt)
 
 
-def output_rate(fmt: str, requested: int | None) -> int:
+def output_rate(fmt: str, requested: int | None, model_rate: int = OUTPUT_SAMPLE_RATE) -> int:
     """The rate the response will really carry.
 
     Not always the rate that was asked for: MP3 and Opus are each defined for a fixed set of
@@ -94,8 +94,10 @@ def output_rate(fmt: str, requested: int | None) -> int:
     they accept. The container records the rate it was written at, so the audio is correct
     either way -- but ``X-Sample-Rate`` has to say what actually happened, and a client
     reading raw pcm has nothing else to go on.
+
+    Nothing requested means the model's own rate, `model_rate`.
     """
-    return audio.container_rate(fmt, requested or SAMPLE_RATE)
+    return audio.container_rate(fmt, requested or model_rate)
 
 
 def streamable(fmt: str, wanted: bool) -> bool:
@@ -137,7 +139,7 @@ class ResampledEncoder:
         return tail + self.encoder.finish()
 
 
-def stream_encoder(fmt: str, sample_rate: int, model_rate: int = SAMPLE_RATE) -> object:
+def stream_encoder(fmt: str, sample_rate: int, model_rate: int = OUTPUT_SAMPLE_RATE) -> object:
     """An incremental encoder for `fmt`, taking the model's frames and emitting `sample_rate`.
 
     `sample_rate` has already been through :func:`output_rate`, so the container will not snap

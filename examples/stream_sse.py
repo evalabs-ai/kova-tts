@@ -11,10 +11,10 @@ exchange is one HTTP request:
 and a ``text/event-stream`` response of blocks separated by a blank line::
 
     event: chunk
-    data: {"index": 0, "audio": "<base64>", "sample_rate": 32000}
+    data: {"index": 0, "audio": "<base64>", "sample_rate": 48000}
 
     event: done
-    data: {"chunks": 7, "samples": 86800, "duration_seconds": 2.712, "sample_rate": 32000}
+    data: {"chunks": 7, "samples": 130200, "duration_seconds": 2.712, "sample_rate": 48000}
 
 ``audio`` is base64 of raw 16-bit little-endian mono PCM at ``sample_rate``. Concatenating
 every chunk's bytes gives the whole utterance -- which is exactly what this script does, and
@@ -73,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
     body = {"text": args.text, "voice": args.voice, "seed": args.seed}
 
     audio = bytearray()
-    sample_rate = 32000
+    sample_rate = 48000
     started = time.perf_counter()
     first: float | None = None
 

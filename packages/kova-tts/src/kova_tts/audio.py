@@ -1,14 +1,18 @@
 """Waveform I/O, conditioning, rate conversion and container encoding.
 
 One convention throughout: a waveform is a **1-D float32 numpy array, mono, nominally in
-[-1, 1]**, at :data:`~kova_codec.constants.SAMPLE_RATE` unless a function says otherwise.
-Anything crossing a module boundary is in that form, so nothing downstream has to guess about
-channel order or dtype.
+[-1, 1]**. Anything crossing a module boundary is in that form, so nothing downstream has to
+guess about channel order or dtype.
+
+Two rates meet here. Audio going *into* the codec -- reference clips, training data -- is at
+:data:`~kova_codec.constants.SAMPLE_RATE`, 32 kHz, the only rate the encoder takes, and the
+loading and conditioning helpers default to it. Audio coming *out* is at the decoder's rate,
+:data:`~kova_codec.constants.OUTPUT_SAMPLE_RATE`, 48 kHz, and the writers default to that.
 
 Reference audio fed to the codec goes through :func:`normalize_loudness` first, so that clips
 recorded at different levels all reach it at -23 LUFS.
 
-**Rate conversion.** The model is native 32 kHz; voice-agent pipelines run at 16 kHz and
+**Rate conversion.** The model speaks at 48 kHz; voice-agent pipelines run at 16 kHz and
 telephony at 8 kHz. :func:`resample` converts a finished waveform; :class:`StreamingResampler`
 converts a stream, and its concatenated output equals resampling the whole signal at once. A
 stateless resample applied per chunk does not: it restarts the anti-alias filter at every chunk
@@ -39,7 +43,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import soundfile as sf
 
-from kova_codec.constants import SAMPLE_RATE, TARGET_LUFS
+from kova_codec.constants import OUTPUT_SAMPLE_RATE, SAMPLE_RATE, TARGET_LUFS
 
 if TYPE_CHECKING:  # torch is imported lazily; importing this module must stay cheap.
     import torch
@@ -157,7 +161,7 @@ class StreamingResampler:
     the right and emits the remainder, truncated to the same length a whole-signal resample
     would produce.
 
-    >>> r = StreamingResampler(32_000, 16_000)
+    >>> r = StreamingResampler(48_000, 16_000)
     >>> out = [r.process(chunk) for chunk in chunks] + [r.flush()]
 
     Equal rates are a pass-through, so a caller can construct one unconditionally.
@@ -193,7 +197,7 @@ class StreamingResampler:
         """Convert `chunk` and return whatever output is now complete. May return nothing.
 
         Output is held back only for as long as the filter needs future input to produce it:
-        `width` input samples, 13 of them at 32 kHz -> 16 kHz.
+        `width` input samples, 19 of them at 48 kHz -> 16 kHz.
         """
         audio = as_waveform(chunk)
         if self._kernel is None:
@@ -336,7 +340,9 @@ def normalize_loudness(
     return np.ascontiguousarray(normalized, dtype=np.float32)
 
 
-def trim_leading(wav: np.ndarray, seconds: float, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
+def trim_leading(
+    wav: np.ndarray, seconds: float, sample_rate: int = OUTPUT_SAMPLE_RATE
+) -> np.ndarray:
     """Drop the first `seconds` of audio.
 
     Used on cloned output, where the model re-renders the reference clip before the target text.
@@ -360,7 +366,7 @@ def to_pcm_bytes(wav: np.ndarray) -> bytes:
     return np.rint(scaled).astype("<i2").tobytes()
 
 
-def to_wav_bytes(wav: np.ndarray, sample_rate: int = SAMPLE_RATE) -> bytes:
+def to_wav_bytes(wav: np.ndarray, sample_rate: int = OUTPUT_SAMPLE_RATE) -> bytes:
     """Waveform -> a complete 16-bit WAV file in memory."""
     buffer = io.BytesIO()
     sf.write(buffer, as_waveform(wav), sample_rate, format="WAV", subtype="PCM_16")
@@ -396,8 +402,9 @@ class _Container:
 #: Rates MPEG-1/2/2.5 layer III is defined for. libsndfile refuses anything else outright.
 _MP3_RATES = (8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000)
 
-#: Rates Opus is defined for. The model's native 32 kHz is not among them, so ``opus`` output
-#: is carried at 48 kHz, the nearest rate above it -- upsampling discards nothing.
+#: Rates Opus is defined for. The model's native 48 kHz is among them; a rate that is not, such
+#: as the 32 kHz of the older decoder, is carried at the nearest rate above it -- upsampling
+#: discards nothing.
 _OPUS_RATES = (8000, 12000, 16000, 24000, 48000)
 
 _CONTAINERS: dict[str, _Container] = {
@@ -617,7 +624,7 @@ class StreamingEncoder:
     states "length unknown", which the format allows and stream decoders handle. MP3 is worse:
     its placeholder frame decodes as 36 ms of leading silence, so it is dropped here
     (see :func:`_mpeg_frame_length`) and the stream begins at the first real frame. What remains
-    is the codec's own priming delay, 1105 samples -- 35 ms at 32 kHz -- which is inherent to
+    is the codec's own priming delay, 1105 samples -- 23 ms at 48 kHz -- which is inherent to
     MP3 without gapless metadata. Every encoded frame after that is byte-identical to what
     :func:`encode_audio` produces.
 
@@ -750,7 +757,7 @@ class StreamingEncoder:
 def save_wav(
     path: str | os.PathLike[str],
     wav: np.ndarray,
-    sample_rate: int = SAMPLE_RATE,
+    sample_rate: int = OUTPUT_SAMPLE_RATE,
 ) -> Path:
     """Write a 16-bit WAV, creating the parent directory. Returns the path written."""
     file = Path(path).expanduser()

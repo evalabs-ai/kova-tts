@@ -1,4 +1,4 @@
-"""Kova neural audio codec: 32 kHz waveforms <-> discrete codes at 80 tokens/second."""
+"""Kova neural audio codec: 32 kHz waveforms -> discrete codes at 80 tokens/second -> 48 kHz."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ from kova_codec.constants import (
     CODE_MIN,
     CODEBOOK_SIZE,
     HOP_LENGTH,
+    OUTPUT_HOP_LENGTH,
+    OUTPUT_SAMPLE_RATE,
     SAMPLE_RATE,
     TARGET_LUFS,
     TOKEN_RATE,
@@ -45,6 +47,8 @@ __all__ = [
     "CODE_MAX",
     "CODE_MIN",
     "HOP_LENGTH",
+    "OUTPUT_HOP_LENGTH",
+    "OUTPUT_SAMPLE_RATE",
     "SAMPLE_RATE",
     "TARGET_LUFS",
     "TOKEN_RATE",

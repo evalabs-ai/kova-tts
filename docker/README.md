@@ -153,7 +153,7 @@ bind-mount a checkout at `/app` and genuinely want its `.env` read, pass an **em
 
 ```bash
 curl -s localhost:8000/health
-# {"status":"ok","model_loaded":true,"device":"cuda","sample_rate":32000,"voices":1,...}
+# {"status":"ok","model_loaded":true,"device":"cuda","sample_rate":48000,"voices":1,...}
 
 curl -s localhost:8000/v1/voices
 

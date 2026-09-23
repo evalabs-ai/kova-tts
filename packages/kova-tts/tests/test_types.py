@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from kova_codec.constants import SAMPLE_RATE, TOKEN_RATE
+from kova_codec.constants import OUTPUT_SAMPLE_RATE, TOKEN_RATE
 from kova_tts.engine.types import (
     CLONE_SAMPLING,
     TTS_SAMPLING,
@@ -106,10 +106,10 @@ class TestSamplingParams:
 
 class TestAudioFrame:
     def test_defaults_to_the_codec_sample_rate(self):
-        assert AudioFrame(np.zeros(4, dtype=np.float32)).sample_rate == SAMPLE_RATE
+        assert AudioFrame(np.zeros(4, dtype=np.float32)).sample_rate == OUTPUT_SAMPLE_RATE
 
     def test_duration(self):
-        frame = AudioFrame(np.zeros(SAMPLE_RATE // 2, dtype=np.float32))
+        frame = AudioFrame(np.zeros(OUTPUT_SAMPLE_RATE // 2, dtype=np.float32))
         assert frame.duration_seconds == pytest.approx(0.5)
 
     def test_samples_are_cast_to_float32(self):

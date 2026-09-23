@@ -25,7 +25,7 @@ codec. Run everything from the repository checkout, so `.env` is found.
     out.wav  1.38 s of audio in 5.4 s (0.3x)
     ```
 
-`wav` is a 1-D float32 numpy array, mono, 32 kHz. That is the only audio format anything in this
+`wav` is a 1-D float32 numpy array, mono, 48 kHz. That is the only audio format anything in this
 project hands you. `save` writes 16-bit WAV and creates the parent directory if it is missing.
 
 There is a longer version of this in

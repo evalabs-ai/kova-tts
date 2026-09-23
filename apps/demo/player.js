@@ -24,7 +24,7 @@
     const STREAM_PATH = window.KOVA_STREAM_PATH || "/v1/tts/stream";
 
     /** The codec's own rate. Every chunk states its rate; this is only the opening assumption. */
-    const CODEC_SAMPLE_RATE = 32000;
+    const CODEC_SAMPLE_RATE = 48000;
 
     /**
      * Slack between "now" and the first frame's start time. Web Audio will silently drop a

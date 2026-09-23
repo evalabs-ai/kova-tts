@@ -27,7 +27,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import Any
 
-from kova_codec.constants import SAMPLE_RATE
+from kova_codec.constants import OUTPUT_SAMPLE_RATE
 from kova_tts import paths
 from kova_tts.engine.types import TTS_SAMPLING, AudioFrame, SamplingParams
 from kova_tts.server.errors import Busy, InvalidRequest
@@ -86,7 +86,7 @@ class Engine:
 
     @property
     def sample_rate(self) -> int:
-        return int(getattr(self.tts, "sample_rate", SAMPLE_RATE))
+        return int(getattr(self.tts, "sample_rate", OUTPUT_SAMPLE_RATE))
 
     @property
     def busy(self) -> bool:

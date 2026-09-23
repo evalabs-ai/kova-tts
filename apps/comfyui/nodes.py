@@ -19,7 +19,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from kova_codec.constants import SAMPLE_RATE
+from kova_codec.constants import OUTPUT_SAMPLE_RATE, SAMPLE_RATE
 from kova_tts import TTS_SAMPLING, SamplingParams
 
 from .audio import from_comfy_audio, to_comfy_audio
@@ -264,7 +264,7 @@ class KovaTTSGenerate:
                 "The model produced no audio for that text. Rephrase it, or add punctuation so "
                 "it has a sentence to work with."
             )
-        return (to_comfy_audio(wav, getattr(tts, "sample_rate", SAMPLE_RATE)),)
+        return (to_comfy_audio(wav, getattr(tts, "sample_rate", OUTPUT_SAMPLE_RATE)),)
 
 
 class KovaTTSCloneVoice:
@@ -309,7 +309,8 @@ class KovaTTSCloneVoice:
         name: str = "cloned",
         transcript: str = "",
     ) -> tuple[Any]:
-        wav = from_comfy_audio(audio, getattr(tts, "sample_rate", SAMPLE_RATE))
+        # The encoder takes 32 kHz, whatever rate the model speaks at.
+        wav = from_comfy_audio(audio, SAMPLE_RATE)
         text = _clean(transcript)
         voice_name = _clean(name) or "cloned"
 

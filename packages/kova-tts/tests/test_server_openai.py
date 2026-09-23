@@ -32,7 +32,7 @@ import soundfile as sf
 from fastapi.testclient import TestClient
 from test_server import StubTTS, speech_samples  # the fake engine the server tests already use
 
-from kova_codec.constants import SAMPLE_RATE
+from kova_codec.constants import OUTPUT_SAMPLE_RATE
 from kova_tts import audio as audio_layer
 from kova_tts.server import formats
 from kova_tts.server.app import create_app
@@ -44,7 +44,7 @@ TEXT = "Point your client at this server and it just works."
 
 #: What the stub produces for TEXT, in seconds. Every container must come back this long,
 #: whatever it resamples to on the way.
-EXPECTED_SECONDS = speech_samples(TEXT) / SAMPLE_RATE
+EXPECTED_SECONDS = speech_samples(TEXT) / OUTPUT_SAMPLE_RATE
 
 #: Containers this installation can actually produce: probed by the audio layer, because a
 #: soundfile wheel older than libsndfile 1.1 cannot write MPEG at all.
@@ -290,8 +290,10 @@ class TestSpeech:
     def test_pcm_is_headerless_at_the_model_rate(self, client):
         response = speak(client, response_format="pcm")
         assert response.content[:4] != b"RIFF"
-        assert response.headers["x-sample-rate"] == str(SAMPLE_RATE)
-        assert len(response.content) // 2 == pytest.approx(EXPECTED_SECONDS * SAMPLE_RATE, abs=2)
+        assert response.headers["x-sample-rate"] == str(OUTPUT_SAMPLE_RATE)
+        assert len(response.content) // 2 == pytest.approx(
+            EXPECTED_SECONDS * OUTPUT_SAMPLE_RATE, abs=2
+        )
 
     def test_a_long_input_is_still_one_request(self, client, tts):
         response = speak(client, input="Hello. " * 200)
@@ -318,7 +320,7 @@ class TestSampleRate:
         assert response.headers["x-sample-rate"] == "24000"
 
     def test_an_absent_rate_is_the_models_own(self, client):
-        assert speak(client).headers["x-sample-rate"] == str(SAMPLE_RATE)
+        assert speak(client).headers["x-sample-rate"] == str(OUTPUT_SAMPLE_RATE)
 
     @pytest.mark.parametrize("rate", [7999, 96000, 0, -16000])
     def test_a_rate_outside_the_range_is_refused(self, client, rate):
@@ -328,7 +330,7 @@ class TestSampleRate:
 
     @pytest.mark.skipif("opus" not in AVAILABLE, reason="this install cannot encode opus")
     def test_opus_reports_the_rate_it_was_really_written_at(self, client):
-        """Opus takes 8/12/16/24/48 kHz, so the model's 32 kHz is carried at 48 kHz instead."""
+        """Opus takes 8/12/16/24/48 kHz, so 32 kHz is carried at 48 kHz instead."""
         response = speak(client, response_format="opus", sample_rate=32000)
         assert response.status_code == 200
         assert response.headers["x-sample-rate"] == "48000"

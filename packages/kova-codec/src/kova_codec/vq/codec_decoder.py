@@ -1,4 +1,4 @@
-"""Quantizer plus the transposed-conv generator: latent frames -> 32 kHz waveform."""
+"""Quantizer plus the transposed-conv generator: latent frames -> waveform."""
 
 from __future__ import annotations
 

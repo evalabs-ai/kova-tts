@@ -15,9 +15,11 @@ tts.save(wav, "out.wav")
 
 Two, and they hold everywhere.
 
-**Audio is a 1-D float32 numpy array, mono, nominally in [-1, 1], at 32 kHz.** Not a tensor, not
+**Audio is a 1-D float32 numpy array, mono, nominally in [-1, 1], at 48 kHz.** Not a tensor, not
 a tuple, not interleaved stereo. `kova_tts.audio.as_waveform` coerces anything close to that
-form; the codec's rate is `tts.sample_rate`, and it is always 32000. `generate` and `stream`
+form; the codec's rate is `tts.sample_rate`, which the codec checkpoint decides and is 48000 for
+the shipped one. Audio going *in* — a reference to clone, a dataset to encode — is at the
+encoder's 32 kHz instead; files are resampled for you. `generate` and `stream`
 take `sample_rate=` when you need something else — see
 [Output sample rates](#output-sample-rates).
 
@@ -71,7 +73,7 @@ save(wav, path, sample_rate=None) -> Path
 
 `voice` is `None` (the base voice), a LoRA voice name, or a `Voice` from `clone`. `params` is a
 `SamplingParams`; leaving it `None` lets the voice pick its own preset, which is what you want.
-`seed` fixes the sampler. `sample_rate` defaults to the model's own 32 kHz.
+`seed` fixes the sampler. `sample_rate` defaults to the model's own 48 kHz.
 
 `stream` yields `AudioFrame` about every 390 ms and always ends with `is_final=True`.
 Concatenating every frame's samples reproduces `generate`'s output.
@@ -84,7 +86,7 @@ wav = np.concatenate(frames) if frames else np.zeros(0, dtype=np.float32)
 
 ### Output sample rates
 
-The model is native 32 kHz. Voice-agent pipelines usually run at 16 kHz and telephony at 8 kHz,
+The model is native 48 kHz. Voice-agent pipelines usually run at 16 kHz and telephony at 8 kHz,
 so pass the rate you want and let the library convert:
 
 ```python
@@ -98,7 +100,7 @@ Both paths use one windowed-sinc polyphase filter, and `stream` carries its stat
 That matters more than it sounds: resampling each frame on its own restarts the filter at every
 frame boundary, and the step it leaves behind is an audible click two or three times a second.
 Here `stream(sample_rate=r)` concatenated is equal to `generate(sample_rate=r)`, sample for
-sample, and both are equal to `torchaudio.functional.resample` of the whole 32 kHz waveform.
+sample, and both are equal to `torchaudio.functional.resample` of the whole 48 kHz waveform.
 
 For a cloned voice the reference trim happens before the conversion, so the output starts at the
 same word whatever rate you ask for.
@@ -179,7 +181,7 @@ flag used by tests to compare the CUDA graph and eager paths exactly.
 ### `AudioFrame`
 
 ```python
-AudioFrame(samples, sample_rate=32000, is_final=False)
+AudioFrame(samples, sample_rate=48000, is_final=False)
 frame.duration_seconds
 ```
 
@@ -219,7 +221,7 @@ or wraps +1.0 round to −32768.
 ```python
 from kova_tts.audio import SUPPORTED_FORMATS, content_type, encode_audio
 
-encode_audio(wav, 32_000, "mp3")     # -> bytes
+encode_audio(wav, 48_000, "mp3")     # -> bytes
 content_type("mp3")                  # 'audio/mpeg'
 ```
 
@@ -237,8 +239,8 @@ what this install can actually write, since MPEG support only arrived in libsndf
 wheel may carry an older one. An unavailable or unknown format raises with the available list in
 the message; `aac` is not something libsndfile writes at all and is refused.
 
-MP3 and Opus are each defined only for a fixed set of sample rates, and 32 kHz is not one of
-Opus's. `container_rate(fmt, rate)` reports what a format will really be written at — audio is
+MP3 and Opus are each defined only for a fixed set of sample rates; the model's 48 kHz is in
+both, but 20 kHz, say, is in neither. `container_rate(fmt, rate)` reports what a format will really be written at — audio is
 resampled to it, and the container states it, so the result plays at the right speed either way.
 
 ### Encoding a stream
@@ -246,7 +248,7 @@ resampled to it, and the container states it, so the result plays at the right s
 ```python
 from kova_tts.audio import STREAMING_FORMATS, StreamingEncoder
 
-encoder = StreamingEncoder("mp3", 32_000)
+encoder = StreamingEncoder("mp3", 48_000)
 for frame in tts.stream(text):
     if data := encoder.encode(frame.samples):
         send(data)
@@ -265,7 +267,7 @@ however finely audio is fed in. Encode opus with `encode_audio` when the audio i
 What a streaming encoder produces is a *stream*, not a saved file. Both `wav` and `flac` state
 "length unknown" at the front, because the length is not known when those bytes go out — legal,
 and what a stream is supposed to say, but a file written from it will not report its duration and
-may not seek. MP3 additionally carries the codec's 1105-sample priming delay (35 ms at 32 kHz),
+may not seek. MP3 additionally carries the codec's 1105-sample priming delay (23 ms at 48 kHz),
 since the tag that tells a decoder to drop it is written at close. Every encoded frame is
 otherwise identical to `encode_audio`'s. When the audio is already in hand, use `encode_audio`.
 
@@ -348,7 +350,7 @@ access, so tooling that only wants prompts or paths never pays for transformers.
 from kova_codec import KovaCodec
 
 codec = KovaCodec.from_checkpoint("codec.pt", device="cuda", decode_only=True)
-wav = codec.decode(codes)                  # [T] codes -> [T * 400] samples
+wav = codec.decode(codes)                  # [T] codes -> [T * codec.hop_length] samples
 ```
 
 `decode_only=True` skips WavLM entirely — about 1.2 GB lighter and several seconds faster to

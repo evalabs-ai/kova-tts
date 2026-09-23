@@ -28,7 +28,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from kova_codec.constants import SAMPLE_RATE
+from kova_codec.constants import OUTPUT_SAMPLE_RATE, SAMPLE_RATE
 from kova_tts import AudioFrame, MissingArtifact, Voice
 from kova_tts.audio import to_pcm_bytes
 
@@ -86,7 +86,7 @@ class FakeTTS:
         fail: Exception | None = None,
         silent: bool = False,
     ) -> None:
-        self.sample_rate = SAMPLE_RATE
+        self.sample_rate = OUTPUT_SAMPLE_RATE
         self.transcriber = transcriber
         self._voices = tuple(voice_names)
         self._frames = frames
@@ -295,8 +295,8 @@ def test_the_stream_is_the_samples_the_model_made(demo: Any, client: Any) -> Non
     assert stream.done == {
         "chunks": 4,
         "samples": len(stream.pcm) // 2,
-        "duration_seconds": round(len(stream.pcm) / 2 / SAMPLE_RATE, 3),
-        "sample_rate": SAMPLE_RATE,
+        "duration_seconds": round(len(stream.pcm) / 2 / OUTPUT_SAMPLE_RATE, 3),
+        "sample_rate": OUTPUT_SAMPLE_RATE,
     }
 
 
@@ -491,7 +491,7 @@ def test_silence_from_the_model_is_a_stream_with_no_chunks(demo: Any, client: An
         "chunks": 0,
         "samples": 0,
         "duration_seconds": 0.0,
-        "sample_rate": SAMPLE_RATE,
+        "sample_rate": OUTPUT_SAMPLE_RATE,
     }
 
 
@@ -668,7 +668,7 @@ def test_generate_returns_the_audio_it_declares(comfy: Any) -> None:
     assert set(audio) == {"waveform", "sample_rate"}
     assert isinstance(audio["waveform"], torch.Tensor)
     assert audio["waveform"].ndim == 3 and audio["waveform"].shape[:2] == (1, 1)
-    assert audio["sample_rate"] == SAMPLE_RATE
+    assert audio["sample_rate"] == OUTPUT_SAMPLE_RATE
     assert fake.calls[0]["voice"] == "alto" and fake.calls[0]["seed"] == 11
 
 
@@ -700,6 +700,17 @@ def test_clone_returns_the_voice_it_declares(comfy: Any) -> None:
     assert isinstance(result[0], Voice) and result[0].name == "mine"
     # The waveform reaches the engine as numpy, never as a ComfyUI dict or a tensor.
     assert isinstance(fake.cloned[0]["audio"], np.ndarray)
+
+
+def test_clone_hands_the_engine_audio_at_the_encoder_rate(comfy: Any) -> None:
+    """The model speaks at 48 kHz but encodes at 32 kHz; a clip has to arrive at the latter."""
+    fake = FakeTTS()
+    node = comfy.NODE_CLASS_MAPPINGS["KovaTTSCloneVoice"]()
+    audio = comfy.nodes.to_comfy_audio(sine(3.0, rate=16_000), 16_000)
+
+    node.clone(fake, audio, "mine", "This is what the clip says.")
+
+    assert abs(fake.cloned[0]["audio"].size - 3 * SAMPLE_RATE) <= 2
 
 
 def test_clone_writes_a_file_when_it_has_to_transcribe(comfy: Any) -> None:

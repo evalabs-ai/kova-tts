@@ -9,14 +9,22 @@ from __future__ import annotations
 import pytest
 import torch
 
-from kova_codec import CODE_MAX, CODE_MIN, CODEBOOK_SIZE, HOP_LENGTH, TOKEN_RATE
+from kova_codec import (
+    CODE_MAX,
+    CODE_MIN,
+    CODEBOOK_SIZE,
+    HOP_LENGTH,
+    OUTPUT_HOP_LENGTH,
+    TOKEN_RATE,
+)
 from kova_codec.vq.codec_decoder import CodecDecoder
 from kova_codec.vq.codec_encoder import CodecEncoder
 from kova_codec.vq.module import SemanticEncoder
 
-# Kova's real ratios: both stacks move 400 samples per code.
+# Kova's real ratios: the encoder takes 400 samples at 32 kHz per code, and the decoder gives
+# back 600 at 48 kHz.
 FULL_ENCODER_RATIOS = (2, 2, 2, 2, 5, 5)
-FULL_DECODER_RATIOS = (5, 5, 2, 2, 2, 2)
+FULL_DECODER_RATIOS = (5, 5, 2, 2, 2, 3)
 
 # A ~200x smaller stack with the same topology, for tests that only care about shapes.
 TINY_HOP = 20
@@ -43,8 +51,9 @@ def tiny_decoder() -> CodecDecoder:
 
 def test_hop_length_is_the_product_of_the_stride_ladder():
     assert CodecEncoder(up_ratios=FULL_ENCODER_RATIOS).hop_length == HOP_LENGTH
-    assert CodecDecoder(up_ratios=FULL_DECODER_RATIOS).hop_length == HOP_LENGTH
+    assert CodecDecoder(up_ratios=FULL_DECODER_RATIOS).hop_length == OUTPUT_HOP_LENGTH
     assert HOP_LENGTH * TOKEN_RATE == 32_000
+    assert OUTPUT_HOP_LENGTH * TOKEN_RATE == 48_000
 
 
 def test_encoder_emits_one_frame_per_hop():

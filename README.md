@@ -7,12 +7,12 @@ Expressive text-to-speech with voice cloning, LoRA finetuning, and a local serve
 </div>
 
 A Llama-3.2-1B backbone generates discrete audio codes at 80 per second; a neural codec decodes
-them to 32 kHz speech. Both halves live here.
+them to 48 kHz speech. Both halves live here.
 
 | Package | Role |
 |---|---|
 | [`kova-tts`](packages/kova-tts) | The model: inference, voice cloning, server, LoRA finetuning |
-| [`kova-codec`](packages/kova-codec) | The codec: 32 kHz waveforms <-> codes at 80 tokens/second |
+| [`kova-codec`](packages/kova-codec) | The codec: 32 kHz waveforms -> codes at 80 tokens/second -> 48 kHz waveforms |
 
 **Documentation: [`docs/`](docs/index.md)**, or `uv run mkdocs serve` for the rendered site.
 
@@ -75,7 +75,7 @@ the picker. Bring your own recording instead if you prefer; then the transcript 
 from kova_tts import KovaTTS
 
 tts = KovaTTS.from_pretrained()
-wav = tts.generate("Hello world.")        # float32 mono numpy at 32 kHz
+wav = tts.generate("Hello world.")        # float32 mono numpy at 48 kHz
 tts.save(wav, "out.wav")
 ```
 

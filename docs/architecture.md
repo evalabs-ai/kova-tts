@@ -6,7 +6,7 @@ obvious from reading it, and the ones that will bite you if you do not know abou
 ## Two stages
 
 ```
-text ──▶ Llama-3.2-1B backbone ──▶ audio codes ──▶ neural codec ──▶ 32 kHz waveform
+text ──▶ Llama-3.2-1B backbone ──▶ audio codes ──▶ neural codec ──▶ 48 kHz waveform
              (kova-tts)             80 per second      (kova-codec)
 ```
 
@@ -21,8 +21,8 @@ The two halves are independently loadable, and a TTS process only ever needs the
 | Vocabulary | 136576 tokens, `tie_word_embeddings: true` |
 | Audio tokens | 8192, ids 128256–136447 |
 | Precision | bfloat16 for the LM; the codec defaults to float16 for decode-only CUDA, float32 otherwise |
-| Sample rate | 32000 Hz mono |
-| Hop | 400 samples per code, so exactly 80 codes/second |
+| Sample rate | 32000 Hz mono in, 48000 Hz mono out |
+| Hop | 400 input samples per code, so exactly 80 codes/second; 600 output samples per code |
 | Codebook | One quantizer, 8192 entries, codebook dim 8 into a 1024-dim VQ space |
 
 ## The token layout
@@ -404,7 +404,11 @@ them with the acoustic encoder's output, projects through `fc_prior`, and quanti
 codebook of 8192 entries. Layer 23 is what the codec was trained against and is not a knob.
 
 **Decode** needs none of that: codebook lookup, a first convolution, an LSTM, then upsampling by
-`prod(up_ratios) = 400` samples per frame. So `decode_only=True` skips WavLM entirely — about
+`prod(up_ratios) = 600` samples per frame, which is what makes the output 48 kHz. The decoder was
+trained on the same frozen encoder and codebook as the older 32 kHz one (`up_ratios` ending in 2
+rather than 3, 400 samples per frame), so the two are interchangeable on the same codes; the
+checkpoint's config picks the ratios, and `KovaCodec.sample_rate` and `hop_length` report them.
+Nothing downstream assumes a rate — it reads `sample_rate` off the codec. So `decode_only=True` skips WavLM entirely — about
 1.2 GB lighter, several seconds faster to start, and it never imports `transformers` inside the
 codec. Plain TTS and LoRA voices only ever decode.
 
