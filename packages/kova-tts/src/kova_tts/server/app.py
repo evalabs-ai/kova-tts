@@ -27,7 +27,7 @@ from kova_codec.constants import TOKEN_RATE
 from kova_tts import __version__
 from kova_tts.engine.backends import BACKENDS
 from kova_tts.server import errors, openai_api, routes, ws
-from kova_tts.server.engine import DEFAULT_BUSY_TIMEOUT, Engine
+from kova_tts.server.engine import DEFAULT_BUSY_TIMEOUT, Engine, on_engine_thread
 
 log = logging.getLogger(__name__)
 
@@ -120,7 +120,9 @@ def create_app(
         # whichever request happens to use it.
         openai_api.validate_aliases(app.state.engine, aliases)
         if injected is None and warmup:
-            await asyncio.to_thread(_warm, loaded)
+            # On the engine thread, which is where every request will run: the codec's cuDNN
+            # plans are per thread, and warming any other one leaves the first request cold.
+            await on_engine_thread(_warm, loaded)
         try:
             yield
         finally:

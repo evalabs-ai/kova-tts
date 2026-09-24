@@ -98,7 +98,12 @@ from kova_tts import voices as voices_module
 from kova_tts.engine.types import CLONE_SAMPLING, Voice
 from kova_tts.server import formats
 from kova_tts.server import protocol as wire
-from kova_tts.server.engine import Engine
+from kova_tts.server.engine import (
+    Engine,
+    close_on_engine_thread,
+    engine_thread,
+    on_engine_thread,
+)
 from kova_tts.server.errors import InvalidRequest
 
 log = logging.getLogger(__name__)
@@ -543,7 +548,7 @@ class Session:
             return
         queue = await self._open_turn()
         async with self.engine.reserve():
-            voice = await asyncio.to_thread(self.model.prepare, self.speaker)
+            voice = await on_engine_thread(self.model.prepare, self.speaker)
             params = self.model.sampling(voice, self.params)
             if not final:
                 params = params.replace(max_tokens=max(room, 1))
@@ -610,34 +615,25 @@ class Session:
 
         A hop costs microseconds against a decode step's milliseconds; what it buys is an event
         loop free to send the audio of earlier codes while these are still being generated. Every
-        hop lands on the same thread, which on MLX is not optional -- see
-        :func:`~kova_tts.server.engine.pinned_worker`.
+        hop lands on the engine thread, which on MLX is not optional -- see
+        :func:`~kova_tts.server.engine.engine_thread`.
         """
-        from kova_tts.server.engine import pinned_worker
-
         produced = 0
         loop = asyncio.get_running_loop()
         stream = self.model.codes(ids, params)
         try:
-            with pinned_worker("kova-codes") as pump:
-                while limit is None or len(self._chunk.codes) < limit:
-                    code = await loop.run_in_executor(pump, next, stream, None)
-                    if code is None:
-                        break
-                    produced += 1
-                    self._chunk.codes.append(code)
-                    codes.put_nowait(code)
+            while limit is None or len(self._chunk.codes) < limit:
+                code = await loop.run_in_executor(engine_thread(), next, stream, None)
+                if code is None:
+                    break
+                produced += 1
+                self._chunk.codes.append(code)
+                codes.put_nowait(code)
             return produced
         finally:
-            # The LM marks itself in flight for the life of this iterator and clears the mark in
-            # its own `finally`. A burst given up on -- one that hit its cap, a cancelled turn, a
-            # client that hung up mid-sentence -- has to run that now rather than whenever the
-            # collector gets to it, or the next burst is told the model is busy. Suppressed
-            # because cancellation stops the wait and not the worker thread: for as long as the
-            # in-flight step takes, the iterator really is still executing and refuses to close,
-            # and it closes itself when that step lands.
-            with contextlib.suppress(ValueError, RuntimeError):
-                stream.close()
+            # A burst given up on -- one that hit its cap, a cancelled turn, a client that hung
+            # up mid-sentence -- leaves the LM marked in flight until its iterator is closed.
+            close_on_engine_thread(stream)
 
     def _rotate(self) -> None:
         """Close the growing chunk and start the next one behind it.
@@ -664,6 +660,8 @@ class Session:
             # Decoding only ends when the turn does, so a task already finished here has failed.
             # Surfacing it now stops the next burst generating into a queue nobody is draining.
             await self._decoding
+        # Off the engine thread: building a decoder is bookkeeping, and this runs before the turn
+        # holds the model, so it must not queue behind a request that does.
         decoder = await asyncio.to_thread(self.model.decoder)
         self._queue = asyncio.Queue()
         self._decoding = asyncio.create_task(self._decode(decoder, self._queue))
@@ -701,19 +699,19 @@ class Session:
         """
         recent: deque[int] = deque(self._decoded, maxlen=self.model.prime_codes)
         if self._decoded:
-            await asyncio.to_thread(decoder.prime, self._decoded)
+            await on_engine_thread(decoder.prime, self._decoded)
         try:
             while True:
                 batch, done = await _next_codes(codes)
                 if batch:
-                    payload = await asyncio.to_thread(self._encode, decoder.push, batch)
+                    payload = await on_engine_thread(self._encode, decoder.push, batch)
                     # Counted as decoded only once they are, so a turn that dies halfway does
                     # not leave the next one priming from audio nobody ever heard.
                     recent.extend(batch)
                     await self._send(payload)
                 if done:
                     break
-            await self._send(await asyncio.to_thread(self._encode, decoder.finish))
+            await self._send(await on_engine_thread(self._encode, decoder.finish))
         finally:
             self._decoded = tuple(recent)
 
@@ -751,6 +749,8 @@ class Session:
             voice = _voice_from_codes(reference)
         else:
             async with self.engine.reserve():
+                # Off the engine thread: this runs before the session holds the model, and must
+                # not wait out another client's utterance to encode a reference.
                 voice = await asyncio.to_thread(_encode_reference, self.model, reference)
         needed, capacity = self.model.reference_headroom(voice)
         if needed > capacity:

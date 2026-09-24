@@ -24,7 +24,9 @@ continuing it would therefore produce measurably more audio than its text calls 
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import contextlib
 import io
 import json
 import re
@@ -1647,6 +1649,42 @@ class TestEngineInternals:
             async for _ in stream:
                 break
         assert closed == [True]
+
+    @pytest.mark.asyncio
+    async def test_a_stream_abandoned_mid_frame_still_releases_the_generator(self):
+        """The usual disconnect: the client goes while the next frame is still decoding.
+
+        The generator is executing on the worker thread at that moment and cannot be closed
+        from here. Once that frame lands it has to be closed anyway -- left suspended, its
+        "one request in flight" flag stays set and every later request is refused.
+        """
+        decoding = threading.Event()
+        closed = threading.Event()
+
+        def frames():
+            try:
+                yield AudioFrame(_tone(10), OUTPUT_SAMPLE_RATE)
+                decoding.set()
+                time.sleep(0.2)  # the frame in flight when the client disconnects
+                yield AudioFrame(_tone(10), OUTPUT_SAMPLE_RATE)
+                yield AudioFrame(_tone(10), OUTPUT_SAMPLE_RATE)
+            finally:
+                closed.set()
+
+        # Held here as the endpoints hold theirs, so nothing but an explicit close can run the
+        # generator's `finally` -- not refcounting the moment the stream is dropped.
+        held = frames()
+
+        async def consume() -> None:
+            async for _ in aiter_frames(held):
+                pass
+
+        task = asyncio.create_task(consume())
+        await asyncio.to_thread(decoding.wait, 5)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        assert await asyncio.to_thread(closed.wait, 5), "the generator was left suspended"
 
     @pytest.mark.asyncio
     async def test_reserve_releases_even_when_the_body_raises(self):

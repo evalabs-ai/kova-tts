@@ -30,6 +30,7 @@ from fastapi.responses import JSONResponse
 
 from kova_tts import CLONE_SAMPLING, TTS_SAMPLING
 from kova_tts.server import errors as server_errors
+from kova_tts.server.engine import engine_thread
 from kova_tts.server.protocol import ErrorResponse
 
 # Every way in reaches this file first, and only some of them give it a package to import its
@@ -216,7 +217,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.preload:
         try:
-            warm_up(session.engine())
+            # On the engine thread, where every request will run: the codec's cuDNN plans are
+            # per thread, and warming any other one leaves the first visitor's request cold.
+            engine_thread().submit(lambda: warm_up(session.engine())).result()
         except DemoError as exc:
             # Not fatal: the page is still worth serving, and it will say the same thing.
             print(f"warning: {exc}", file=sys.stderr)

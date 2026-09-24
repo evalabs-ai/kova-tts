@@ -9,7 +9,6 @@ disk, and a second lock over the same non-reentrant generator is not a lock at a
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import json
 import logging
@@ -22,7 +21,7 @@ from fastapi.responses import StreamingResponse
 from kova_codec.constants import OUTPUT_SAMPLE_RATE
 from kova_tts import audio as audio_io
 from kova_tts.server import errors as server_errors
-from kova_tts.server.engine import aiter_frames
+from kova_tts.server.engine import aiter_frames, on_engine_thread
 from kova_tts.server.protocol import (
     ChunkEvent,
     DoneEvent,
@@ -83,7 +82,7 @@ def add_stream_route(app: FastAPI, session: DemoSession, *, path: str = STREAM_P
         # not thread-safe and the first two visitors would otherwise both pay for it.
         await session.acquire()
         try:
-            frames = await asyncio.to_thread(session.frames, body.text, body.voice, params=params)
+            frames = await on_engine_thread(session.frames, body.text, body.voice, params=params)
         except BaseException:
             session.release()
             raise

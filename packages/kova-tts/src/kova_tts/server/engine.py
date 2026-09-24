@@ -20,12 +20,13 @@ a thirty-second generation, which is the failure mode a queue would give it. Set
 from __future__ import annotations
 
 import asyncio
-import contextlib
+import functools
 import logging
-from collections.abc import AsyncIterator, Iterator
+import threading
+from collections.abc import AsyncIterator, Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, TypeVar
 
 from kova_codec.constants import OUTPUT_SAMPLE_RATE
 from kova_tts import paths
@@ -34,6 +35,8 @@ from kova_tts.server.errors import Busy, InvalidRequest
 from kova_tts.server.protocol import SamplingOverrides
 
 log = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 #: Seconds a second caller waits for the model before being refused. Long enough to absorb the
 #: hand-off between two back-to-back requests, short enough that a real collision is reported
@@ -175,8 +178,8 @@ class Engine:
         *,
         params: SamplingParams | None,
     ) -> Any:
-        """The whole waveform, generated off the event loop."""
-        return await asyncio.to_thread(self.tts.generate, text, voice, params=params)
+        """The whole waveform, generated on the engine thread."""
+        return await on_engine_thread(self.tts.generate, text, voice, params=params)
 
     def stream(
         self,
@@ -194,29 +197,65 @@ class Engine:
         return aiter_frames(self.tts.stream(text, voice, params=params))
 
 
-@contextlib.contextmanager
-def pinned_worker(name: str) -> Iterator[ThreadPoolExecutor]:
-    """One dedicated thread, for the whole life of one MLX-backed iterator.
+#: What the engine thread is called in a stack dump or a profiler.
+ENGINE_THREAD_NAME = "kova-engine"
 
-    Anything that steps an iterator belonging to the MLX generator has to step it from the *same*
-    thread every time, which :func:`asyncio.to_thread` cannot promise: that helper submits to the
-    default pool, which is free to pick a different worker per call. MLX binds a GPU stream to
-    the thread that created it, so an utterance resumed elsewhere raises ``There is no
-    Stream(gpu, N) in current thread`` the moment it touches an array the first thread made.
+_engine_thread: ThreadPoolExecutor | None = None
+_engine_thread_lock = threading.Lock()
 
-    Even where nothing breaks, a step on a new thread pays for a fresh GPU stream. One worker for
-    the whole iterator fixes both, and costs a thread per in-flight request -- which is one, since
-    the engine is batch-1.
 
-    ``shutdown(wait=False)`` because a cancelled consumer must not block the event loop until the
-    in-flight step finishes on the GPU. The worker is never reused, so letting it retire on its
-    own is safe; closing the iterator is what actually releases the generator.
+def engine_thread() -> ThreadPoolExecutor:
+    """The one thread every call into the model and the codec runs on, for the life of the process.
+
+    One thread, and always the same one, for two reasons:
+
+    * **PyTorch keeps cuDNN's execution plans per thread.** The codec's upsampling stack has
+      dozens of convolution shapes, and the first decode on a thread that has never run it
+      spends about 1.2 s building plans for all of them, against ~25 ms once they exist. A new
+      thread per request paid that before every first frame -- it was most of the time to first
+      audio. One thread, warmed at startup (:func:`on_engine_thread` from the server's and the
+      demo's warm-ups), pays it once.
+    * **MLX binds a GPU stream to the thread that created it**, so an iterator belonging to the
+      MLX generator has to be stepped from the same thread every time; resumed anywhere else it
+      raises ``There is no Stream(gpu, N) in current thread``. One thread for everything is the
+      simplest way to never break that.
+
+    One is also all there is work for: the engine is batch-1, and :class:`Engine` serialises
+    requests before they get here. Never shut down; it lives as long as the model it serves.
     """
-    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix=name)
+    global _engine_thread
+    with _engine_thread_lock:
+        if _engine_thread is None:
+            _engine_thread = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix=ENGINE_THREAD_NAME
+            )
+        return _engine_thread
+
+
+async def on_engine_thread(fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> T:
+    """``fn(*args, **kwargs)`` on :func:`engine_thread`, awaited from the event loop."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(engine_thread(), functools.partial(fn, *args, **kwargs))
+
+
+def close_on_engine_thread(iterator: Any) -> None:
+    """Close a generator that the engine thread may be in the middle of stepping.
+
+    A consumer that gives up -- a disconnected client, a cancelled burst -- leaves the model's
+    generator suspended with its "one request in flight" flag still set, and the caller usually
+    still holds it, so nothing else will ever close it: every later request would be told the
+    model is busy. Closing runs that flag's ``finally``.
+
+    Closed here when it can be. But cancellation stops the wait for the engine thread, not the
+    thread, so a consumer that left mid-step finds the generator still executing there, and an
+    executing generator refuses to be closed. Then the close is queued behind that step instead
+    and runs the moment it lands, on the engine thread. Not awaited: a cancelled consumer must
+    not wait for the GPU.
+    """
     try:
-        yield pool
-    finally:
-        pool.shutdown(wait=False)
+        iterator.close()
+    except ValueError:
+        engine_thread().submit(iterator.close)
 
 
 async def aiter_frames(frames: Iterator[AudioFrame]) -> AsyncIterator[AudioFrame]:
@@ -225,27 +264,15 @@ async def aiter_frames(frames: Iterator[AudioFrame]) -> AsyncIterator[AudioFrame
     A hop costs microseconds and frames are ~390 ms apart, so the overhead is invisible; what it
     buys is an event loop that stays responsive while the GPU works, which is the difference
     between a WebSocket that answers a ``close_context`` promptly and one that answers it after
-    the current utterance. Every hop lands on the same thread -- see :func:`pinned_worker`.
+    the current utterance. Every hop lands on the same thread -- see :func:`engine_thread`.
     """
     done = object()
     loop = asyncio.get_running_loop()
     try:
-        with pinned_worker("kova-frames") as pump:
-            while True:
-                frame = await loop.run_in_executor(pump, next, frames, done)
-                if frame is done:
-                    return
-                yield frame  # type: ignore[misc]
+        while True:
+            frame = await loop.run_in_executor(engine_thread(), next, frames, done)
+            if frame is done:
+                return
+            yield frame  # type: ignore[misc]
     finally:
-        # A consumer that gives up -- a disconnected SSE client, a cancelled flush -- leaves the
-        # underlying generator suspended mid-decode with its "one request in flight" flag still
-        # set. Closing it runs that flag's `finally` now, rather than whenever the garbage
-        # collector gets to it, which is the difference between the next request working and
-        # the next request being told the model is busy.
-        #
-        # Suppressed because cancellation does not stop the worker thread, only the wait for
-        # it: for the tens of milliseconds it takes the in-flight frame to finish decoding, the
-        # generator really is still executing and refuses to be closed. It closes itself when
-        # that frame lands, so the flag is cleared either way.
-        with contextlib.suppress(ValueError, RuntimeError):
-            frames.close()
+        close_on_engine_thread(frames)
