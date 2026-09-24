@@ -86,7 +86,7 @@ def engine(demo: Any) -> Any:
         # The first generation of a process captures CUDA graphs and builds the codec, which
         # costs seconds and has nothing to do with either surface. The demo's own answer to
         # this is `--preload`; here it is one throwaway sentence.
-        loaded.generate("Warming up.", params=SamplingParams(max_tokens=256), seed=1)
+        loaded.generate("Warming up.", params=SamplingParams(max_tokens=256))
     except Exception as exc:  # noqa: BLE001 - a box without weights skips rather than fails
         pytest.skip(f"could not load the model: {exc}")
     return loaded
@@ -172,11 +172,12 @@ def test_the_demo_streams_the_models_own_samples(demo: Any, engine: Any, demo_ur
 
     Both halves matter. Gradio's streaming audio component re-encodes every frame to AAC, which
     makes the stream and the finished clip different audio with only one of them clean, so the
-    page does not use it. Re-running the same seed through :meth:`KovaTTS.stream` and comparing
-    waveforms is the check that nothing like it has crept into the path.
+    page does not use it. Re-running the same random state through :meth:`KovaTTS.stream` and
+    comparing waveforms is the check that nothing like it has crept into the path.
 
-    The comparison has a tolerance, and it is worth being precise about why. The seed fixes the
-    sampler, so two runs produce the same tokens and the same number of samples -- but CUDA
+    The comparison has a tolerance, and it is worth being precise about why. Starting both runs
+    from one random state fixes the sampler -- the server runs in this process, on the same
+    device generator -- so they produce the same tokens and the same number of samples -- but CUDA
     reductions are not bit-reproducible run to run, so the decoded waveform differs by a few
     parts in 100,000 (about -85 dBFS, some 60 dB below the quietest thing anyone can hear on
     this material). A codec in the path does not look like that: an AAC round trip adds 32 ms of
@@ -184,7 +185,10 @@ def test_the_demo_streams_the_models_own_samples(demo: Any, engine: Any, demo_ur
     still catches. ``generate()`` is deliberately not the
     reference either: it decodes the whole code sequence at once rather than window by window.
     """
-    run = stream_once(demo_url + demo.STREAM_PATH, text=TEXT, seed=1234)
+    import torch
+
+    torch.manual_seed(1234)
+    run = stream_once(demo_url + demo.STREAM_PATH, text=TEXT)
 
     audio = np.frombuffer(run["pcm"], dtype="<i2")
     seconds = audio.size / OUTPUT_SAMPLE_RATE
@@ -194,8 +198,9 @@ def test_the_demo_streams_the_models_own_samples(demo: Any, engine: Any, demo_ur
     assert run["done"]["sample_rate"] == OUTPUT_SAMPLE_RATE
 
     # Sample for sample, what the browser got is what the codec decoded.
-    again = np.concatenate([frame.samples for frame in engine.stream(TEXT, seed=1234)])
-    assert audio.size == again.size, "the same seed must produce the same number of samples"
+    torch.manual_seed(1234)
+    again = np.concatenate([frame.samples for frame in engine.stream(TEXT)])
+    assert audio.size == again.size, "the same random state must produce the same samples"
     assert snr_db(again, audio.astype(np.float32) / 32767.0) > 60.0
 
     assert run["first_audio"] is not None
@@ -211,17 +216,20 @@ def test_the_demo_streams_the_models_own_samples(demo: Any, engine: Any, demo_ur
 def test_three_generations_in_a_row_all_stream(demo: Any, demo_url: str) -> None:
     """Streaming has to work every time, not only on the first press.
 
-    One server, three requests, the same seed. Anything left behind by a run -- a reservation
-    not released, a generator not closed -- shows up here as a refusal or a short stream.
+    One server, three requests, each from the same random state. Anything left behind by a run
+    -- a reservation not released, a generator not closed -- shows up here as a refusal or a
+    short stream.
     """
-    runs = [
-        stream_once(demo_url + demo.STREAM_PATH, text="Once more, with feeling.", seed=99)
-        for _ in range(3)
-    ]
+    import torch
+
+    runs = []
+    for _ in range(3):
+        torch.manual_seed(99)
+        runs.append(stream_once(demo_url + demo.STREAM_PATH, text="Once more, with feeling."))
 
     assert all(run["chunks"] > 0 and run["done"] is not None for run in runs)
     waves = [np.frombuffer(run["pcm"], dtype="<i2").astype(np.float32) / 32767.0 for run in runs]
-    assert len({wave.size for wave in waves}) == 1, "same seed, same length, every time"
+    assert len({wave.size for wave in waves}) == 1, "same random state, same length, every time"
     # Same audio too, to within the run-to-run noise of a GPU decode. A run that streamed only
     # part of its audio, or streamed it twice, is nowhere near this.
     assert all(snr_db(waves[0], wave) > 60.0 for wave in waves[1:])
@@ -231,7 +239,7 @@ def test_three_generations_in_a_row_all_stream(demo: Any, demo_url: str) -> None
 def test_the_comfyui_node_generates_real_audio(comfy: Any, engine: Any) -> None:
     node = comfy.NODE_CLASS_MAPPINGS["KovaTTSGenerate"]()
 
-    (audio,) = node.generate(engine, "Generated from a ComfyUI graph.", seed=99)
+    (audio,) = node.generate(engine, "Generated from a ComfyUI graph.")
 
     waveform = audio["waveform"]
     assert audio["sample_rate"] == OUTPUT_SAMPLE_RATE

@@ -29,14 +29,13 @@ Hub. If the page says it cannot find the weights, `uv run kova-tts paths` shows 
 
 ## What is on the page
 
-**Speak.** Text box, voice picker, seed, and a Speak button. Sound starts after the first
+**Speak.** Text box, voice picker, and a Speak button. Sound starts after the first
 ~390 ms frame is decoded and runs continuously to the end of the utterance, while the later
 sentences are still being generated. Stop halts it at once and leaves everything ready to go
 again. When the generation finishes, the same audio appears in a normal player below the
 progress bar, for scrubbing and downloading — it is built in the browser from the frames it
 already received, so nothing is generated or encoded twice. The line underneath reports time to
-first audio, how much speech was produced in how long, and the seed that produced it, so a
-result you like can be reproduced by typing that seed back in.
+first audio, and how much speech was produced in how long.
 
 **Advanced** (collapsed) holds temperature, top-p, top-k, repetition penalty and the token
 budget. They start at the tuned preset, and switching voice resets them to the preset that voice

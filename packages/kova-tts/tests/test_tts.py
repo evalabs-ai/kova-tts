@@ -272,22 +272,18 @@ class TestCarryAcrossChunks:
 
 class TestSamplingChoice:
     def test_plain_synthesis_uses_the_tts_preset(self):
-        assert KovaTTS._sampling(None, None, None) is TTS_SAMPLING
+        assert KovaTTS._sampling(None, None) is TTS_SAMPLING
 
     def test_a_lora_voice_uses_the_tts_preset(self, tmp_path):
         voice = Voice(name="alpha", lora_path=tmp_path)
-        assert KovaTTS._sampling(voice, None, None) is TTS_SAMPLING
+        assert KovaTTS._sampling(voice, None) is TTS_SAMPLING
 
     def test_a_cloned_voice_uses_the_clone_preset(self, clone_voice):
-        assert KovaTTS._sampling(clone_voice, None, None) is CLONE_SAMPLING
+        assert KovaTTS._sampling(clone_voice, None) is CLONE_SAMPLING
 
     def test_an_explicit_params_wins(self, clone_voice):
         mine = TTS_SAMPLING.replace(temperature=0.5)
-        assert KovaTTS._sampling(clone_voice, mine, None) is mine
-
-    def test_a_seed_is_applied_to_whichever_preset_was_chosen(self, clone_voice):
-        assert KovaTTS._sampling(clone_voice, None, 42).seed == 42
-        assert KovaTTS._sampling(clone_voice, None, 42).temperature == CLONE_SAMPLING.temperature
+        assert KovaTTS._sampling(clone_voice, mine) is mine
 
 
 class TestReferenceTrim:
@@ -500,7 +496,7 @@ def tts(cuda_device, local_artifact) -> KovaTTS:
 @pytest.mark.gpu
 @pytest.mark.weights
 def test_a_sentence_becomes_real_audio(tts):
-    wav = tts.generate("The quick brown fox jumps over the lazy dog.", seed=7)
+    wav = tts.generate("The quick brown fox jumps over the lazy dog.")
     assert wav.dtype == np.float32 and wav.ndim == 1
     assert wav.size / tts.sample_rate > 0.5, (
         "less than half a second of speech for a whole sentence"
@@ -517,8 +513,12 @@ def test_a_sentence_becomes_real_audio(tts):
 @pytest.mark.weights
 def test_streaming_yields_the_same_audio_as_generating(tts):
     text = "The quick brown fox jumps over the lazy dog."
-    whole = tts.generate(text, seed=99)
-    frames = list(tts.stream(text, seed=99))
+    # Both runs start from one random state, so they sample the same codes and any difference
+    # left is the decoding.
+    torch.manual_seed(99)
+    whole = tts.generate(text)
+    torch.manual_seed(99)
+    frames = list(tts.stream(text))
     assert frames[-1].is_final
     assert all(f.sample_rate == OUTPUT_SAMPLE_RATE for f in frames)
     streamed = np.concatenate([f.samples for f in frames])
@@ -533,8 +533,8 @@ def test_several_sentences_produce_more_audio_than_one(tts):
     stop immediately, which shows up here as a paragraph no longer than its first sentence."""
     first = "The quick brown fox jumps over the lazy dog."
     paragraph = f"{first} Pack my box with five dozen liquor jugs. How quickly daft zebras jump."
-    one = tts.generate(first, seed=3)
-    three = tts.generate(paragraph, seed=3)
+    one = tts.generate(first)
+    three = tts.generate(paragraph)
     assert three.size > 2 * one.size
 
 
@@ -543,18 +543,21 @@ def test_several_sentences_produce_more_audio_than_one(tts):
 def test_a_clone_does_not_begin_with_its_reference(tts, local_artifact):
     """The single easiest thing to get subtly wrong: the reference is re-rendered first.
 
-    The assertion is about the trim, so it holds whatever the reference says -- set
-    ``KOVA_TEST_TRANSCRIPT`` to the clip's real words for an intelligible sample as well.
+    Needs ``KOVA_TEST_TRANSCRIPT`` as well as the clip: cloning continues the reference, and
+    with words that do not match it the model often stops at once, so a made-up transcript
+    passes or fails by the luck of the draw rather than by what this checks.
     """
     from kova_tts import paths
 
     reference = local_artifact("KOVA_TEST_AUDIO")
+    transcript = os.environ.get("KOVA_TEST_TRANSCRIPT", "").strip()
+    if not transcript:
+        pytest.skip("set KOVA_TEST_TRANSCRIPT to what the KOVA_TEST_AUDIO clip says")
     local_artifact(paths.ENV_WAVLM)  # cloning needs the encoder, and therefore WavLM
-    transcript = os.environ.get("KOVA_TEST_TRANSCRIPT") or "This is a short spoken recording."
     voice = tts.clone(reference, transcript=transcript)
     assert voice.is_clone and voice.ref_seconds > 0.5
 
-    wav = tts.generate("The quick brown fox jumps over the lazy dog.", voice=voice, seed=5)
+    wav = tts.generate("The quick brown fox jumps over the lazy dog.", voice=voice)
     assert wav.size / tts.sample_rate > 0.5
 
     original = audio_io.load_audio(reference, tts.sample_rate)

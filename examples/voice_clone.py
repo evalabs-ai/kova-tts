@@ -33,6 +33,6 @@ tts = KovaTTS.from_pretrained(transcriber=asr_transcriber())
 voice = tts.clone(reference)  # transcribed automatically
 print(f'reference heard as: "{voice.ref_text}"')
 
-wav = tts.generate(TEXT, voice, seed=7)
+wav = tts.generate(TEXT, voice)
 out = tts.save(wav, "cloned.wav")
 print(f"{out}: {wav.size / tts.sample_rate:.1f} seconds of audio")

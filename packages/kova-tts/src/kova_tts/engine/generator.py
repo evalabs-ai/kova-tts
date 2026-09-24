@@ -407,9 +407,6 @@ class Generator:
         budget: int,
         greedy: bool,
     ) -> Iterator[int]:
-        generator = None
-        if params.seed is not None:
-            generator = torch.Generator(device=self.device).manual_seed(params.seed)
         temperature = 0.0 if greedy else params.temperature
 
         with torch.inference_mode():
@@ -424,7 +421,6 @@ class Generator:
                         top_k=params.top_k,
                         repetition_penalty=params.repetition_penalty,
                         previous=self._seen,
-                        generator=generator,
                     )
                 )
                 code = int(self._row_to_code[row])

@@ -147,10 +147,6 @@ class SynthesisRequest(_WireModel):
         description="A LoRA voice name from GET /v1/voices. Omit for the base model's voice.",
     )
     sampling: SamplingOverrides | None = None
-    seed: int | None = Field(
-        default=None,
-        description="Fixes the sampler, so the same request returns the same audio.",
-    )
 
     @field_validator("text")
     @classmethod
@@ -453,7 +449,6 @@ class StartConfig(_WireModel):
         "Validated when it arrives, so an unusable clip is refused before any text is sent.",
     )
     sampling: SamplingOverrides | None = None
-    seed: int | None = None
     response_format: ResponseFormat = Field(default_factory=ResponseFormat)
 
     @model_validator(mode="after")

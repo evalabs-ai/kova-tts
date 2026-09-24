@@ -43,7 +43,7 @@ All three live under **audio → Kova TTS**.
 | Node | Inputs | Outputs |
 |---|---|---|
 | **Kova TTS Loader** | `device`, `precision`, and optional `model` / `codec` / `lora_dir` paths | `KOVA_TTS` |
-| **Kova TTS Generate** | `KOVA_TTS`, `text`, `seed`, `temperature`, `top_p`, `top_k`, `repetition_penalty`, `max_tokens`, optional `KOVA_VOICE` or `voice_name` | `AUDIO` |
+| **Kova TTS Generate** | `KOVA_TTS`, `text`, `temperature`, `top_p`, `top_k`, `repetition_penalty`, `max_tokens`, optional `KOVA_VOICE` or `voice_name` | `AUDIO` |
 | **Kova TTS Clone Voice** | `KOVA_TTS`, `AUDIO`, `name`, optional `transcript` | `KOVA_VOICE` |
 
 `KOVA_TTS` and `KOVA_VOICE` are opaque links between these nodes. `AUDIO` is ComfyUI's own

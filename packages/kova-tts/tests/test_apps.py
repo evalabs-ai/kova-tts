@@ -74,7 +74,7 @@ class FakeTTS:
     """:class:`KovaTTS`'s surface, without the model.
 
     Records what it was asked for, so a test can check that the demo passed the resolved voice
-    and the seed through rather than only that it produced audio.
+    and the sampling through rather than only that it produced audio.
     """
 
     def __init__(
@@ -101,8 +101,8 @@ class FakeTTS:
     def voice(self, name: str) -> Voice:
         return Voice(name=name, lora_path=Path(f"/nowhere/{name}"))
 
-    def stream(self, text, voice=None, *, params=None, seed=None):
-        self.calls.append({"text": text, "voice": voice, "params": params, "seed": seed})
+    def stream(self, text, voice=None, *, params=None):
+        self.calls.append({"text": text, "voice": voice, "params": params})
         if self._fail is not None:
             raise self._fail
         if self._silent:
@@ -112,8 +112,8 @@ class FakeTTS:
             yield AudioFrame(sine(0.2 * (index + 1)), self.sample_rate)
         yield AudioFrame(np.zeros(0, dtype=np.float32), self.sample_rate, is_final=True)
 
-    def generate(self, text, voice=None, *, params=None, seed=None) -> np.ndarray:
-        pieces = [frame.samples for frame in self.stream(text, voice, params=params, seed=seed)]
+    def generate(self, text, voice=None, *, params=None) -> np.ndarray:
+        pieces = [frame.samples for frame in self.stream(text, voice, params=params)]
         return np.concatenate(pieces) if pieces else np.zeros(0, dtype=np.float32)
 
     def clone(self, audio, transcript=None, *, name=None, sample_rate=SAMPLE_RATE) -> Voice:
@@ -289,11 +289,11 @@ def test_the_stream_is_the_samples_the_model_made(demo: Any, client: Any) -> Non
     http, _session, fake = client()
 
     with http:
-        stream = speak(http, demo.STREAM_PATH, text="Hello there, this is a test.", seed=7)
+        stream = speak(http, demo.STREAM_PATH, text="Hello there, this is a test.")
 
     assert stream.status == 200
     assert len(stream.chunks) == 4, "each decoded frame reaches the browser on its own"
-    assert stream.pcm == to_pcm_bytes(fake.generate("Hello there, this is a test.", seed=7))
+    assert stream.pcm == to_pcm_bytes(fake.generate("Hello there, this is a test."))
     assert stream.done == {
         "chunks": 4,
         "samples": len(stream.pcm) // 2,
@@ -312,7 +312,7 @@ def test_generating_three_times_in_a_row_works_every_time(demo: Any, client: Any
     http, _session, _fake = client()
 
     with http:
-        runs = [speak(http, demo.STREAM_PATH, text="Say it again.", seed=1) for _ in range(3)]
+        runs = [speak(http, demo.STREAM_PATH, text="Say it again.") for _ in range(3)]
 
     assert [run.status for run in runs] == [200, 200, 200]
     assert all(run.done is not None and run.error is None for run in runs)
@@ -320,15 +320,14 @@ def test_generating_three_times_in_a_row_works_every_time(demo: Any, client: Any
     assert all(len(run.chunks) == 4 for run in runs)
 
 
-def test_the_voice_and_a_concrete_seed_reach_the_engine(demo: Any, client: Any) -> None:
+def test_the_voice_reaches_the_engine(demo: Any, client: Any) -> None:
     http, _session, fake = client(FakeTTS(("alto",)))
 
     with http:
-        stream = speak(http, demo.STREAM_PATH, text="Say this.", voice="alto", seed=4321)
+        stream = speak(http, demo.STREAM_PATH, text="Say this.", voice="alto")
 
     assert stream.status == 200
     assert fake.calls[0]["voice"] == "alto"
-    assert fake.calls[0]["seed"] == 4321
 
 
 def test_the_sampling_controls_reach_the_engine(demo: Any, client: Any) -> None:
@@ -663,7 +662,7 @@ def test_generate_returns_the_audio_it_declares(comfy: Any) -> None:
     fake = FakeTTS()
     node = comfy.NODE_CLASS_MAPPINGS["KovaTTSGenerate"]()
 
-    result = node.generate(fake, "Speak this sentence.", seed=11, voice_name="alto")
+    result = node.generate(fake, "Speak this sentence.", voice_name="alto")
 
     assert len(result) == len(node.RETURN_TYPES) == 1
     audio = result[0]
@@ -671,7 +670,13 @@ def test_generate_returns_the_audio_it_declares(comfy: Any) -> None:
     assert isinstance(audio["waveform"], torch.Tensor)
     assert audio["waveform"].ndim == 3 and audio["waveform"].shape[:2] == (1, 1)
     assert audio["sample_rate"] == OUTPUT_SAMPLE_RATE
-    assert fake.calls[0]["voice"] == "alto" and fake.calls[0]["seed"] == 11
+    assert fake.calls[0]["voice"] == "alto"
+
+
+def test_generate_runs_again_every_time_it_is_queued(comfy: Any) -> None:
+    """Every generation is a fresh take, so ComfyUI must never answer from its cache."""
+    changed = comfy.NODE_CLASS_MAPPINGS["KovaTTSGenerate"].IS_CHANGED(text="Same words.")
+    assert changed != changed  # NaN: never equal to what ComfyUI saw last time
 
 
 def test_generate_prefers_a_connected_voice(comfy: Any) -> None:

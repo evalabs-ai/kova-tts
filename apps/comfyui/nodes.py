@@ -175,10 +175,6 @@ class KovaTTSGenerate:
             "required": {
                 "tts": ("KOVA_TTS",),
                 "text": ("STRING", {"multiline": True, "default": "", "dynamicPrompts": False}),
-                "seed": (
-                    "INT",
-                    {"default": 0, "min": 0, "max": 0xFFFFFFFF, "control_after_generate": True},
-                ),
                 "temperature": (
                     "FLOAT",
                     {"default": TTS_SAMPLING.temperature, "min": 0.05, "max": 2.0, "step": 0.05},
@@ -230,11 +226,17 @@ class KovaTTSGenerate:
     FUNCTION = "generate"
     CATEGORY = CATEGORY
 
+    @classmethod
+    def IS_CHANGED(cls, **_inputs: Any) -> float:
+        """Always run again: every generation is a fresh take, so ComfyUI must not hand back the
+        previous one from its cache just because the inputs look the same. NaN never equals
+        itself, which is ComfyUI's way of saying "changed"."""
+        return float("nan")
+
     def generate(
         self,
         tts: Any,
         text: str,
-        seed: int = 0,
         temperature: float = TTS_SAMPLING.temperature,
         top_p: float = TTS_SAMPLING.top_p,
         top_k: int = TTS_SAMPLING.top_k,
@@ -257,7 +259,6 @@ class KovaTTSGenerate:
             text,
             voice if voice is not None else _clean(voice_name),
             params=params,
-            seed=int(seed),
         )
         if wav.size == 0:
             raise RuntimeError(

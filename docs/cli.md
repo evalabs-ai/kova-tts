@@ -103,11 +103,10 @@ installed. `--clone-audio` clones from a recording — drop `--clone-text` and t
 transcribed with ASR, which needs `uv sync --extra data`. The two flags are two ways of saying
 who, so passing both is an error, and `--clone-text` without `--clone-audio` is too.
 
-### Streaming and seeds
+### Streaming
 
 ```bash
 uv run kova-tts generate "A longer line." --stream --out out.wav
-uv run kova-tts generate "Reproducible." --seed 7 --out out.wav
 ```
 
 `--stream` decodes as the model generates and reports time to first audio. It is not faster
@@ -122,7 +121,6 @@ overall; it is here because time to first audio is the number a streaming deploy
 | `-o`, `--out FILE` | Output WAV (default `out.wav`) |
 | `--voice NAME` | LoRA voice name |
 | `--stream` | Decode as it generates, and report time to first audio |
-| `--seed N` | Make the sampling reproducible |
 | `--clone-audio FILE` | Reference recording to clone |
 | `--clone-text TEXT` | What the reference says, word for word |
 | `--temperature`, `--top-p`, `--top-k`, `--repetition-penalty`, `--max-tokens` | Sampling; unset flags keep the preset the voice implies |

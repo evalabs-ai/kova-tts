@@ -103,12 +103,6 @@ def build_ui(
                             label="Voice",
                             info="LoRA voices installed here, plus anything you clone.",
                         )
-                        seed = gr.Number(
-                            value=-1,
-                            precision=0,
-                            label="Seed",
-                            info="-1 draws a new one; the seed used is printed below.",
-                        )
                         with gr.Row():
                             speak_button = gr.Button("Speak", variant="primary", scale=3)
                             stop_button = gr.Button("Stop", variant="stop", scale=1)
@@ -224,7 +218,7 @@ def build_ui(
 
         # The Speak button hands the control values straight to the player; a Gradio event in
         # the middle could only re-encode the audio or hold it back.
-        controls = [text, voice, temperature, top_p, top_k, repetition_penalty, max_tokens, seed]
+        controls = [text, voice, temperature, top_p, top_k, repetition_penalty, max_tokens]
         speak_button.click(None, controls, None, js=SPEAK_JS)
         text.submit(None, controls, None, js=SPEAK_JS)
         stop_button.click(None, None, None, js=STOP_JS)

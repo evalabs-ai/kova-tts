@@ -6,7 +6,7 @@ a recording. They live under **audio → Kova TTS** in the node menu.
 | Node | In | Out |
 |---|---|---|
 | **Kova TTS Loader** | `device`, `precision`, optional `model` / `codec` / `lora_dir` paths | `KOVA_TTS` |
-| **Kova TTS Generate** | `KOVA_TTS`, `text`, `seed`, sampling knobs, optional `KOVA_VOICE` or `voice_name` | `AUDIO` |
+| **Kova TTS Generate** | `KOVA_TTS`, `text`, sampling knobs, optional `KOVA_VOICE` or `voice_name` | `AUDIO` |
 | **Kova TTS Clone Voice** | `KOVA_TTS`, `AUDIO`, `name`, optional `transcript` | `KOVA_VOICE` |
 
 `AUDIO` is ComfyUI's own format, so the generate node feeds **Save Audio** or **Preview Audio**

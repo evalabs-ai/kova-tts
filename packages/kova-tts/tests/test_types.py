@@ -81,9 +81,6 @@ class TestSamplingParams:
         assert tweaked.top_k == CLONE_SAMPLING.top_k
         assert CLONE_SAMPLING.temperature == 1.1
 
-    def test_seed_defaults_to_unset(self):
-        assert SamplingParams().seed is None
-
     @pytest.mark.parametrize(
         ("field", "value"),
         [

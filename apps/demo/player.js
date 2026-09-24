@@ -43,8 +43,8 @@
      *     seconds ~ 0.049 * characters + 0.70 * sentences + 0.31 * clause breaks - 0.15
      *
      * Fitted on the shipped model over 96 generations -- short replies to long paragraphs, the
-     * base voice and two LoRAs, two seeds each. The median error is 6%, which is the model's own
-     * seed-to-seed variation on identical text; the worst tenth are within 17%. Every pause is
+     * base voice and two LoRAs, two runs each. The median error is 6%, which is the model's own
+     * run-to-run variation on identical text; the worst tenth are within 17%. Every pause is
      * worth more than its one character, which is what the two punctuation terms are for.
      */
     const PACE = { perChar: 0.049, perSentence: 0.70, perClause: 0.31, offset: -0.15 };
@@ -500,8 +500,8 @@
     }
 
     /**
-     * What a downloaded clip is called: the voice, when it was generated, how it starts, and the
-     * seed that reproduces it -- `kova_erika_2026-09-24_14-05-32_the-kettle-clicked_seed42.wav`.
+     * What a downloaded clip is called: the voice, when it was generated, and how it starts --
+     * `kova_erika_2026-09-24_14-05-32_the-kettle-clicked-off-and.wav`.
      */
     function clipFilename(run) {
         const pad = (n) => String(n).padStart(2, "0");
@@ -513,7 +513,6 @@
             slug(run.voice || "base", 4) || "voice",
             `${date}_${time}`,
             slug(run.text, FILENAME_WORDS),
-            `seed${run.seed}`,
         ];
         return `${parts.filter(Boolean).join("_")}.wav`;
     }
@@ -664,12 +663,8 @@
         stop({ quiet: true });
 
         const controller = new AbortController();
-        const seed = Number.isFinite(options.seed) && options.seed >= 0
-            ? Math.floor(options.seed)
-            : Math.floor(Math.random() * 2147483646);
         active = {
             controller,
-            seed,
             text,
             voice: options.voice || "",
             at: new Date(),
@@ -694,7 +689,6 @@
                 body: JSON.stringify({
                     text: text,
                     voice: options.voice || null,
-                    seed: seed,
                     sampling: {
                         temperature: options.temperature,
                         top_p: options.top_p,
@@ -772,7 +766,7 @@
         const speed = elapsed > 0 ? spoken / elapsed : 0;
         setStatus(
             `First audio in ${(run.firstAudio || 0).toFixed(2)} s · ${spoken.toFixed(1)} s of ` +
-                `speech in ${elapsed.toFixed(1)} s (${speed.toFixed(1)}× real time) · seed ${run.seed}`,
+                `speech in ${elapsed.toFixed(1)} s (${speed.toFixed(1)}× real time)`,
         );
     }
 

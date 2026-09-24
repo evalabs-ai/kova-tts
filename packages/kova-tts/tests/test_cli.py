@@ -84,12 +84,12 @@ class FakeTTS:
         type(self).calls.append(("clone", audio, transcript))
         return types.SimpleNamespace(name="cloned", is_clone=True, ref_text=transcript or "heard")
 
-    def generate(self, text, voice=None, *, params=None, seed=None):
-        type(self).calls.append(("generate", text, voice, params, seed))
+    def generate(self, text, voice=None, *, params=None):
+        type(self).calls.append(("generate", text, voice, params))
         return np.zeros(self.sample_rate, dtype=np.float32)
 
-    def stream(self, text, voice=None, *, params=None, seed=None):
-        type(self).calls.append(("stream", text, voice, params, seed))
+    def stream(self, text, voice=None, *, params=None):
+        type(self).calls.append(("stream", text, voice, params))
         half = np.zeros(self.sample_rate // 2, dtype=np.float32)
         yield types.SimpleNamespace(samples=half, is_final=False)
         yield types.SimpleNamespace(samples=half, is_final=True)
@@ -269,7 +269,7 @@ class TestGenerate:
     def test_writes_a_file_and_reports_it(self, engine, tmp_path, capsys):
         out = tmp_path / "out.wav"
         assert cli.main(["generate", "Hello there.", "--out", str(out)]) == 0
-        assert ("generate", "Hello there.", None, None, None) in engine
+        assert ("generate", "Hello there.", None, None) in engine
         assert out.is_file()
         assert str(out) in capsys.readouterr().out
 
@@ -279,12 +279,12 @@ class TestGenerate:
         assert (
             cli.main(["generate", "--text-file", str(script), "-o", str(tmp_path / "a.wav")]) == 0
         )
-        assert ("generate", "From a file.", None, None, None) in engine
+        assert ("generate", "From a file.", None, None) in engine
 
     def test_stdin(self, engine, tmp_path, monkeypatch):
         monkeypatch.setattr("sys.stdin", __import__("io").StringIO("Piped in."))
         assert cli.main(["generate", "--text-file", "-", "-o", str(tmp_path / "a.wav")]) == 0
-        assert ("generate", "Piped in.", None, None, None) in engine
+        assert ("generate", "Piped in.", None, None) in engine
 
     def test_missing_text_file(self, engine, tmp_path, capsys):
         code = cli.main(["generate", "--text-file", str(tmp_path / "nope.txt")])
@@ -304,7 +304,7 @@ class TestGenerate:
     def test_voice_is_passed_through(self, engine, tmp_path):
         out = tmp_path / "a.wav"
         assert cli.main(["generate", "Hi.", "--voice", "voice_a", "-o", str(out)]) == 0
-        assert ("generate", "Hi.", "voice_a", None, None) in engine
+        assert ("generate", "Hi.", "voice_a", None) in engine
 
     def test_artifact_flags_reach_the_engine(self, engine, tmp_path):
         assert (
@@ -330,14 +330,12 @@ class TestGenerate:
         assert kwargs["lora_root"] == str(tmp_path)
         assert callable(kwargs["transcriber"])
 
-    def test_seed_and_sampling_overrides(self, engine, tmp_path):
+    def test_sampling_overrides(self, engine, tmp_path):
         argv = [
             "generate",
             "Hi.",
             "-o",
             str(tmp_path / "a.wav"),
-            "--seed",
-            "7",
             "--temperature",
             "0.5",
             "--top-k",
@@ -345,8 +343,7 @@ class TestGenerate:
         ]
         assert cli.main(argv) == 0
         call = next(c for c in engine if c[0] == "generate")
-        params, seed = call[3], call[4]
-        assert seed == 7
+        params = call[3]
         assert (params.temperature, params.top_k) == (0.5, 12)
         # Untouched knobs keep the plain-TTS preset rather than the dataclass defaults.
         from kova_tts import TTS_SAMPLING
@@ -760,9 +757,7 @@ class TestRealGeneration:
 
         out = tmp_path / "spoken.wav"
         text = "The kettle boiled while the rain kept up against the window."
-        code = cli.main(
-            ["generate", text, "--out", str(out), "--seed", "1234", "--device", _free_device()]
-        )
+        code = cli.main(["generate", text, "--out", str(out), "--device", _free_device()])
         assert code == 0
 
         wav, rate = sf.read(str(out), dtype="float32")

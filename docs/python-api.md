@@ -66,14 +66,14 @@ Keyword arguments are honoured only on the call that actually loads the model.
 ### Synthesis
 
 ```python
-generate(text, voice=None, *, params=None, seed=None, sample_rate=None) -> np.ndarray
-stream(text, voice=None, *, params=None, seed=None, sample_rate=None) -> Iterator[AudioFrame]
+generate(text, voice=None, *, params=None, sample_rate=None) -> np.ndarray
+stream(text, voice=None, *, params=None, sample_rate=None) -> Iterator[AudioFrame]
 save(wav, path, sample_rate=None) -> Path
 ```
 
 `voice` is `None` (the base voice), a LoRA voice name, or a `Voice` from `clone`. `params` is a
 `SamplingParams`; leaving it `None` lets the voice pick its own preset, which is what you want.
-`seed` fixes the sampler. `sample_rate` defaults to the model's own 48 kHz.
+`sample_rate` defaults to the model's own 48 kHz.
 
 `stream` yields `AudioFrame` about every 390 ms and always ends with `is_final=True`.
 Concatenating every frame's samples reproduces `generate`'s output.
@@ -157,7 +157,7 @@ rejected in `__post_init__` rather than silently doing nothing.
 
 ```python
 SamplingParams(temperature=1.1, top_p=0.9, top_k=75, repetition_penalty=1.1,
-               max_tokens=2048, seed=None)
+               max_tokens=2048)
 ```
 
 Frozen and validated: `temperature > 0`, `0 < top_p <= 1`, `top_k >= 0` (0 disables it),

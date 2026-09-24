@@ -174,7 +174,7 @@ curl -s localhost:8000/v1/voices
 
 curl -s -X POST localhost:8000/v1/tts \
   -H 'content-type: application/json' \
-  -d '{"text":"The quick brown fox jumps over the lazy dog.","seed":1234}' \
+  -d '{"text":"The quick brown fox jumps over the lazy dog."}' \
   -o out.wav
 ```
 

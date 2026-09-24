@@ -90,7 +90,6 @@ Request body:
 | `text` | required | Up to 5000 characters |
 | `voice` | optional | A name from `GET /v1/voices`. Omit for the base voice |
 | `sampling` | optional | `temperature`, `top_p`, `top_k`, `repetition_penalty`, `max_tokens` — send only what you want changed |
-| `seed` | optional | Fixes the sampler |
 | `response_format` | optional | `"wav"` (default) or `"pcm"` |
 
 Response headers carry `X-Sample-Rate` and `X-Duration-Seconds`. `wav` comes back as `audio/wav`
@@ -194,7 +193,7 @@ Client frames, discriminated by their key:
 
 | Frame | |
 |---|---|
-| `{"start_context": {...}}` | Settings for the session, fixed for its lifetime: `voice` **or** `reference` (a clip to clone), `sampling`, `seed`, `response_format` |
+| `{"start_context": {...}}` | Settings for the session, fixed for its lifetime: `voice` **or** `reference` (a clip to clone), `sampling`, `response_format` |
 | `{"send_text": "..."}` | Add text. Send as often as you like; the session speaks it as it arrives |
 | `{"flush": true, "flush_id": "..."}` | End the turn — finish what is left, stay open |
 | `{"close_context": true, "flush_id": "..."}` | End the turn, then end the session |
@@ -404,7 +403,7 @@ what those clients read. There is no authentication, so the API key is ignored; 
 !!! note "An addition, not a replacement"
 
     `/v1/tts`, `/v1/tts/stream` and `/v1/ws` are unchanged and are not deprecated. They are this
-    server's own API and they keep everything this one has no field for: `sampling`, `seed`,
+    server's own API and they keep everything this one has no field for: `sampling`,
     strict rejection of unknown fields, and an incremental session that speaks one continuous
     utterance however the text arrives. Use the
     compatible endpoint to plug into a tool you did not write; use the native API when you are

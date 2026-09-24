@@ -52,7 +52,7 @@ tts = KovaTTS.from_pretrained()
 text = "The kettle had just boiled, and the rain was still going at the window."
 for _ in range(3):
     started = time.perf_counter()
-    wav = tts.generate(text, seed=7)
+    wav = tts.generate(text)
     elapsed = time.perf_counter() - started
     seconds = wav.size / tts.sample_rate
     print(f"{seconds:.2f}s audio in {elapsed:.2f}s -> {seconds / elapsed:.2f}x")
@@ -103,20 +103,9 @@ Again: cold. The warm figures, and the card each was measured on, are in
 
 Streaming is not faster overall — it is the same work, reported earlier.
 
-## Reproducing a result
-
-Pass a `seed` and the same request gives the same audio:
-
-```bash
-uv run kova-tts generate "A fixed seed makes this reproducible." --seed 7 --out seed.wav
-```
-
-```python
-wav = tts.generate("A fixed seed makes this reproducible.", seed=7)
-```
-
-Without a seed, sampling is random each time — the presets use `temperature=1.1` for plain
-synthesis. Greedy decoding is not available: `SamplingParams` requires a positive temperature.
+Every generation is a fresh take: sampling is random each time — the presets use
+`temperature=1.1` for plain synthesis — so the same text never comes out quite the same twice.
+Greedy decoding is not available: `SamplingParams` requires a positive temperature.
 
 ## Voices
 

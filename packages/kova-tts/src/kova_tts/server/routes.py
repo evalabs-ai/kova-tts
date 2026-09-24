@@ -110,7 +110,7 @@ async def synthesize(body: TtsRequest, request: Request) -> Response:
     params = engine.sampling(body.sampling)
 
     async with engine.reserve():
-        wav = await engine.generate(body.text, body.voice, params=params, seed=body.seed)
+        wav = await engine.generate(body.text, body.voice, params=params)
 
     audio = np.asarray(wav, dtype=np.float32)
     rate = engine.sample_rate
@@ -172,7 +172,7 @@ async def synthesize_stream(body: SynthesisRequest, request: Request) -> Streami
             # only an explicit aclose passes that on to the model's iterator. Without it the
             # abandoned generation stays marked in-flight and the next request is told the
             # server is busy.
-            stream = engine.stream(body.text, body.voice, params=params, seed=body.seed)
+            stream = engine.stream(body.text, body.voice, params=params)
             async with aclosing(stream) as frames:
                 async for frame in frames:
                     if not frame.samples.size:

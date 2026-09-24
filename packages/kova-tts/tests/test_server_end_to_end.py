@@ -6,10 +6,12 @@ about the speech. This file closes that gap: it boots the application exactly as
 comes back is audio of a plausible length -- and that the two streaming paths agree with each
 other sample for sample.
 
-Determinism comes from ``seed=``, not from a zero temperature:
-:class:`~kova_tts.engine.types.SamplingParams` rejects ``temperature <= 0`` on purpose, because
-greedy decoding is not a supported operating point for this model. A fixed seed pins the
-sampler just as firmly and stays on the sampling path the model was tuned for.
+Determinism comes from putting torch's random state back to one fixed point before each run,
+not from a zero temperature: :class:`~kova_tts.engine.types.SamplingParams` rejects
+``temperature <= 0`` on purpose, because greedy decoding is not a supported operating point for
+this model. ``TestClient`` runs the application in this process, on the same device generator,
+so resetting it here pins the sampler just as firmly and stays on the sampling path the model
+was tuned for.
 
 The two streaming endpoints are compared **byte for byte**; the synchronous one is compared
 with a tolerance. That asymmetry is not slack, it is the design:
@@ -31,6 +33,7 @@ import time
 import numpy as np
 import pytest
 import soundfile as sf
+import torch
 
 from kova_codec.constants import OUTPUT_SAMPLE_RATE, SAMPLE_RATE
 
@@ -57,8 +60,8 @@ CLONE_TEXT = "How quickly daft zebras jump over the lazy dog."
 #: A rate a realtime voice pipeline runs at, and not the codec's own.
 AGENT_RATE = 16_000
 
-#: Pins the sampler so the three endpoints are generating the same thing.
-SEED = 20240917
+#: The random state every compared run starts from, so they all sample the same codes.
+RANDOM_STATE = 20240917
 
 #: Anything shorter than this for the sentence above is a failure, not a fast model.
 MIN_SECONDS = 0.5
@@ -129,7 +132,8 @@ def _session(client, texts, **config) -> tuple[bytes, list[int], float]:
     started = time.perf_counter()
     first: float | None = None
     with client.websocket_connect("/v1/ws") as ws:
-        ws.send_json({"start_context": {"seed": SEED, **config}})
+        _same_draws()
+        ws.send_json({"start_context": config})
         assert "context_started" in ws.receive_json()
         for index, text in enumerate(texts):
             last = index == len(texts) - 1
@@ -163,7 +167,12 @@ def _pcm_samples(payload: bytes) -> np.ndarray:
 
 
 def _body() -> dict:
-    return {"text": TEXT, "seed": SEED}
+    return {"text": TEXT}
+
+
+def _same_draws() -> None:
+    """Start the next generation from :data:`RANDOM_STATE`, like every other compared run."""
+    torch.manual_seed(RANDOM_STATE)
 
 
 # ------------------------------------------------------------------------------------ the model
@@ -198,6 +207,7 @@ def test_synthesis_returns_real_audio(client):
 
 @pytest.fixture(scope="module")
 def sync_audio(client) -> np.ndarray:
+    _same_draws()
     response = client.post("/v1/tts", json={**_body(), "response_format": "pcm"})
     assert response.status_code == 200
     return _pcm_samples(response.content)
@@ -209,6 +219,7 @@ def sse_audio(client) -> bytes:
     chunks: list[bytes] = []
     started = time.perf_counter()
     first: float | None = None
+    _same_draws()
     with client.stream("POST", "/v1/tts/stream", json=_body()) as response:
         assert response.status_code == 200
         event = ""
@@ -235,7 +246,8 @@ def ws_audio(client) -> bytes:
     started = time.perf_counter()
     first: float | None = None
     with client.websocket_connect("/v1/ws") as ws:
-        ws.send_json({"start_context": {"seed": SEED}})
+        _same_draws()
+        ws.send_json({"start_context": {}})
         assert "context_started" in ws.receive_json()
         ws.send_json({"send_text": TEXT})
         ws.send_json({"close_context": True, "flush_id": "only"})
@@ -255,7 +267,7 @@ def ws_audio(client) -> bytes:
 
 
 def test_the_two_streaming_paths_are_byte_identical(sse_audio, ws_audio):
-    """Same seed, same decoder, same frames: the transports must not change the audio."""
+    """Same draws, same decoder, same frames: the transports must not change the audio."""
     assert sse_audio == ws_audio
 
 
@@ -263,7 +275,8 @@ def test_the_stream_matches_the_synchronous_endpoint(sync_audio, sse_audio):
     streamed = _pcm_samples(sse_audio)
     assert streamed.size == sync_audio.size, (
         "the streaming and whole-utterance decoders produced different lengths, which means "
-        "the two runs did not generate the same codes -- check that the seed is being applied"
+        "the two runs did not generate the same codes -- check that nothing else draws from "
+        "the random state between runs"
     )
     # The seam tolerance from StreamingDecoder's own docstring, with room for 16-bit rounding.
     assert float(np.max(np.abs(streamed - sync_audio))) < 5e-3
@@ -289,14 +302,16 @@ def test_a_session_at_a_realtime_rate_matches_the_model(client, tts):
     """
     payload, _, first = _session(client, [TEXT], response_format={"sample_rate": AGENT_RATE})
     streamed = _pcm_samples(payload)
-    whole = tts.generate(TEXT, None, params=None, seed=SEED, sample_rate=AGENT_RATE)
+    _same_draws()
+    whole = tts.generate(TEXT, None, params=None, sample_rate=AGENT_RATE)
     seconds = streamed.size / AGENT_RATE
     print(f"\n[server] WS {AGENT_RATE} Hz: {seconds:.2f} s of audio, first frame at {first:.2f} s")
 
     assert seconds > MIN_SECONDS
     assert streamed.size == whole.size, (
         "the session and the whole-utterance render produced different lengths, which means "
-        "they did not generate the same codes -- check that the seed is being applied"
+        "they did not generate the same codes -- check that nothing else draws from the "
+        "random state between runs"
     )
     # The seam tolerance StreamingDecoder's own docstring measures, with room for 16-bit
     # rounding: the difference here is the windowed decode, not the rate conversion.
@@ -353,7 +368,7 @@ def test_a_voice_that_does_not_exist_is_a_404(client):
 @pytest.fixture(scope="module")
 def reference(tts) -> np.ndarray:
     """The reference clip, rendered by the model itself so that nothing has to be committed."""
-    wav = tts.generate(REFERENCE_TEXT, None, params=None, seed=SEED)
+    wav = tts.generate(REFERENCE_TEXT, None, params=None)
     assert wav.size / OUTPUT_SAMPLE_RATE > 1.0, "the reference came out too short to clone from"
     return wav
 
@@ -380,7 +395,7 @@ def _cloned(client, reference: dict, texts=(CLONE_TEXT,)) -> tuple[bytes, float,
     started = time.perf_counter()
     first: float | None = None
     with client.websocket_connect("/v1/ws") as ws:
-        ws.send_json({"start_context": {"seed": SEED, "reference": reference}})
+        ws.send_json({"start_context": {"reference": reference}})
         opening = ws.receive_json()
         assert "context_started" in opening, opening
         opened = time.perf_counter() - started
@@ -466,20 +481,22 @@ def test_a_cloned_session_joins_its_flushes_without_a_step(client, reference_enc
 def test_a_reference_recording_of_your_own(client, tts):
     """The same path on a real recording, for anyone who has one to point at.
 
-    Skipped unless ``KOVA_TEST_AUDIO`` names a clip: nothing here ships one, and a tone is not a
-    voice. What is asserted is the trim and nothing about the words, because the transcript is
-    only as good as ``KOVA_TEST_TRANSCRIPT`` -- and one that does not match the clip garbles the
-    speech, which is a property of cloning rather than a fault in the session.
+    Skipped unless ``KOVA_TEST_AUDIO`` names a clip and ``KOVA_TEST_TRANSCRIPT`` says what it
+    says: nothing here ships one, a tone is not a voice, and with words that do not match the
+    clip the model often stops at once -- a property of cloning, not a fault in the session, and
+    one that would make this pass or fail by the luck of the draw. What is asserted is the trim.
     """
     import os
 
     from kova_tts import audio as audio_io
 
     path = os.environ.get("KOVA_TEST_AUDIO", "").strip()
-    if not path:
-        pytest.skip("set KOVA_TEST_AUDIO to a local speech file to clone from a real recording")
+    transcript = os.environ.get("KOVA_TEST_TRANSCRIPT", "").strip()
+    if not path or not transcript:
+        pytest.skip(
+            "set KOVA_TEST_AUDIO to a local speech file and KOVA_TEST_TRANSCRIPT to what it says"
+        )
     clip = audio_io.load_audio(path)[: int(10 * SAMPLE_RATE)]
-    transcript = os.environ.get("KOVA_TEST_TRANSCRIPT") or "This is a short spoken recording."
     voice = tts.clone(clip, transcript=transcript)
 
     payload, _, echo = _cloned(client, {"transcript": transcript, "codes": list(voice.ref_codes)})

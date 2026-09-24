@@ -174,10 +174,9 @@ class Engine:
         voice: str | None,
         *,
         params: SamplingParams | None,
-        seed: int | None,
     ) -> Any:
         """The whole waveform, generated off the event loop."""
-        return await asyncio.to_thread(self.tts.generate, text, voice, params=params, seed=seed)
+        return await asyncio.to_thread(self.tts.generate, text, voice, params=params)
 
     def stream(
         self,
@@ -185,7 +184,6 @@ class Engine:
         voice: str | None,
         *,
         params: SamplingParams | None,
-        seed: int | None,
     ) -> AsyncIterator[AudioFrame]:
         """Frames as the codec produces them, pumped off the event loop.
 
@@ -193,7 +191,7 @@ class Engine:
         is awaited -- which is what lets a caller reserve the model, hand the response back to
         the ASGI server, and only then start generating.
         """
-        return aiter_frames(self.tts.stream(text, voice, params=params, seed=seed))
+        return aiter_frames(self.tts.stream(text, voice, params=params))
 
 
 @contextlib.contextmanager
@@ -206,10 +204,9 @@ def pinned_worker(name: str) -> Iterator[ThreadPoolExecutor]:
     the thread that created it, so an utterance resumed elsewhere raises ``There is no
     Stream(gpu, N) in current thread`` the moment it touches an array the first thread made.
 
-    A **seeded** generation dies on its second step that way, because ``mx.random.key`` is
-    exactly such an array. An unseeded one survives on the global generator, but still pays for a
-    fresh GPU stream per step. One worker for the whole iterator fixes both, and costs a thread
-    per in-flight request -- which is one, since the engine is batch-1.
+    Even where nothing breaks, a step on a new thread pays for a fresh GPU stream. One worker for
+    the whole iterator fixes both, and costs a thread per in-flight request -- which is one, since
+    the engine is batch-1.
 
     ``shutdown(wait=False)`` because a cancelled consumer must not block the event loop until the
     in-flight step finishes on the GPU. The worker is never reused, so letting it retire on its

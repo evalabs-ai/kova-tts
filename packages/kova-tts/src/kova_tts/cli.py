@@ -364,15 +364,15 @@ def _cmd_generate(args: argparse.Namespace) -> int:
 
     started = time.perf_counter()
     if args.stream:
-        wav, first_audio = _stream(tts, text, voice, params=params, seed=args.seed)
+        wav, first_audio = _stream(tts, text, voice, params=params)
     else:
-        wav, first_audio = tts.generate(text, voice, params=params, seed=args.seed), None
+        wav, first_audio = tts.generate(text, voice, params=params), None
     elapsed = time.perf_counter() - started
 
     if wav.size == 0:
         raise CommandError(
             "The model produced no audio for that text. Check that it contains speakable "
-            "characters, and try a different --seed."
+            "characters, and try running it again."
         )
     written = tts.save(wav, args.out)
     seconds = wav.size / tts.sample_rate
@@ -448,7 +448,7 @@ def _sampling(args: argparse.Namespace, *, cloning: bool) -> Any:
     return (CLONE_SAMPLING if cloning else TTS_SAMPLING).replace(**overrides)
 
 
-def _stream(tts: Any, text: str, voice: Any, *, params: Any, seed: int | None):
+def _stream(tts: Any, text: str, voice: Any, *, params: Any):
     """Collect a streamed generation, timing the first frame that carries audio.
 
     Streaming to a file is not faster overall; it is here because time-to-first-audio is the
@@ -459,7 +459,7 @@ def _stream(tts: Any, text: str, voice: Any, *, params: Any, seed: int | None):
     started = time.perf_counter()
     first: float | None = None
     chunks: list[Any] = []
-    for frame in tts.stream(text, voice, params=params, seed=seed):
+    for frame in tts.stream(text, voice, params=params):
         if frame.samples.size and first is None:
             first = time.perf_counter() - started
         chunks.append(frame.samples)
@@ -596,7 +596,6 @@ def _add_generate(sub: argparse._SubParsersAction) -> None:
         action="store_true",
         help="decode as the model generates, and report time-to-first-audio",
     )
-    parser.add_argument("--seed", type=int, default=None, help="make the sampling reproducible")
 
     group = parser.add_argument_group("cloning")
     group.add_argument("--clone-audio", default=None, help="reference recording to clone")

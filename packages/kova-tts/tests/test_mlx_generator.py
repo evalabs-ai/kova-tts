@@ -90,18 +90,13 @@ class TestRealModel:
         second = list(generator.stream_ids(ids, TTS_SAMPLING.replace(max_tokens=24), greedy=True))
         assert first == second
 
-    def test_a_seed_makes_a_sampled_run_repeatable(self, generator):
-        params = TTS_SAMPLING.replace(max_tokens=24, seed=99)
-        ids = generator.encode("<|begin_of_text|>")
-        assert list(generator.stream_ids(ids, params)) == list(generator.stream_ids(ids, params))
-
     def test_every_code_is_inside_the_codebook(self, generator):
-        params = TTS_SAMPLING.replace(max_tokens=32, seed=1)
+        params = TTS_SAMPLING.replace(max_tokens=32)
         codes = list(generator.stream_ids(generator.encode("<|begin_of_text|>"), params))
         assert codes and all(0 <= code < 8192 for code in codes)
 
     def test_the_budget_is_honoured(self, generator):
-        params = TTS_SAMPLING.replace(max_tokens=16, seed=2)
+        params = TTS_SAMPLING.replace(max_tokens=16)
         codes = list(generator.stream_ids(generator.encode("<|begin_of_text|>"), params))
         assert len(codes) <= 16
 
@@ -110,7 +105,7 @@ class TestRealModel:
             list(generator.stream_ids([0] * (generator.max_cache_len + 1)))
 
     def test_two_overlapping_generations_are_refused(self, generator):
-        params = TTS_SAMPLING.replace(max_tokens=8, seed=3)
+        params = TTS_SAMPLING.replace(max_tokens=8)
         running = generator.stream_ids(generator.encode("<|begin_of_text|>"), params)
         next(running)
         try:

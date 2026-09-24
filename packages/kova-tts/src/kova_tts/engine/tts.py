@@ -333,7 +333,6 @@ class KovaTTS:
         voice: str | Voice | None = None,
         *,
         params: SamplingParams | None = None,
-        seed: int | None = None,
         sample_rate: int | None = None,
     ) -> np.ndarray:
         """Synthesize `text` and return the whole waveform: float32 mono.
@@ -344,7 +343,7 @@ class KovaTTS:
         """
         out_rate = self._output_rate(sample_rate)
         resolved = self._prepare(voice)
-        params = self._sampling(resolved, params, seed)
+        params = self._sampling(resolved, params)
         codes = self._generate_codes(text, resolved, params)
         if not codes:
             return np.zeros(0, dtype=np.float32)
@@ -366,7 +365,6 @@ class KovaTTS:
         voice: str | Voice | None = None,
         *,
         params: SamplingParams | None = None,
-        seed: int | None = None,
         sample_rate: int | None = None,
     ) -> Iterator[AudioFrame]:
         """Synthesize `text`, yielding audio as it is decoded.
@@ -383,7 +381,7 @@ class KovaTTS:
         """
         out_rate = self._output_rate(sample_rate)
         resolved = self._prepare(voice)
-        params = self._sampling(resolved, params, seed)
+        params = self._sampling(resolved, params)
         decoder = StreamingDecoder(self.codec, window=self.decode_window)
         if resolved is not None and resolved.is_clone:
             decoder.prime(self._preroll(resolved))
@@ -429,16 +427,9 @@ class KovaTTS:
         return resolved
 
     @staticmethod
-    def _sampling(
-        voice: Voice | None,
-        params: SamplingParams | None,
-        seed: int | None,
-    ) -> SamplingParams:
-        """Pick the preset the voice calls for, then apply the caller's overrides."""
-        chosen = params or (
-            CLONE_SAMPLING if voice is not None and voice.is_clone else TTS_SAMPLING
-        )
-        return chosen.replace(seed=seed) if seed is not None else chosen
+    def _sampling(voice: Voice | None, params: SamplingParams | None) -> SamplingParams:
+        """The caller's params, or the preset the voice calls for."""
+        return params or (CLONE_SAMPLING if voice is not None and voice.is_clone else TTS_SAMPLING)
 
     def _preroll(self, voice: Voice) -> tuple[int, ...]:
         """Reference codes used to warm the codec before a cloned generation."""
@@ -624,7 +615,6 @@ def generate(
     voice: str | Voice | None = None,
     out: str | os.PathLike[str] | None = None,
     params: SamplingParams | None = None,
-    seed: int | None = None,
     sample_rate: int | None = None,
 ) -> np.ndarray:
     """Synthesize `text` with the cached model, optionally writing it to `out`.
@@ -632,7 +622,7 @@ def generate(
     >>> generate("Hello world.", out="out.wav")
     """
     tts = load()
-    wav = tts.generate(text, voice, params=params, seed=seed, sample_rate=sample_rate)
+    wav = tts.generate(text, voice, params=params, sample_rate=sample_rate)
     if out is not None:
         # The file has to state the rate the samples are actually at, not the model's.
         tts.save(wav, out, sample_rate)

@@ -88,7 +88,6 @@ class SamplingParams:
     top_k: int = 75
     repetition_penalty: float = 1.1
     max_tokens: int = 2048
-    seed: int | None = None
 
     def __post_init__(self) -> None:
         if self.temperature <= 0:

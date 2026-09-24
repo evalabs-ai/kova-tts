@@ -184,14 +184,13 @@ class DemoSession:
         voice: str | None,
         *,
         params: SamplingParams | None = None,
-        seed: int | None = None,
     ) -> Iterator[Any]:
         """Audio frames for `text`, in this session's voice namespace.
 
         Blocking, and it loads the model on the first call, so callers on an event loop run it
         in a thread. The iterator itself is lazy: nothing is generated until it is advanced.
         """
-        return self.engine().stream(text, self.resolve(voice), params=params, seed=seed)
+        return self.engine().stream(text, self.resolve(voice), params=params)
 
     # ---------------------------------------------------------------------------- callbacks
 
@@ -389,7 +388,7 @@ def warm_up(tts: Any) -> Any:
     """
     log.info("Warming up: one short generation to build the codec and capture CUDA graphs.")
     try:
-        tts.generate("Warming up.", params=SamplingParams(max_tokens=256), seed=0)
+        tts.generate("Warming up.", params=SamplingParams(max_tokens=256))
     except Exception as exc:  # noqa: BLE001 - a warm-up that fails is not worth refusing to serve
         log.warning("Warm-up generation failed, continuing anyway: %s", exc)
     return tts

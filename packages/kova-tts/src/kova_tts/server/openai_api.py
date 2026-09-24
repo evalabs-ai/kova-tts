@@ -4,7 +4,7 @@ Open WebUI, SillyTavern, LibreChat, AnythingLLM and most local voice stacks can 
 OpenAI's audio-speech endpoint. Answering it here turns "integrate this TTS" into "change the
 base URL", which is the entire reason this module exists. It adds nothing to the model and
 takes nothing away from :mod:`kova_tts.server.routes`: ``/v1/tts`` and ``/v1/tts/stream`` are
-this server's own API, they keep every knob this one lacks (sampling, seed, strict validation),
+this server's own API, they keep every knob this one lacks (sampling, strict validation),
 and neither surface deprecates the other.
 
 **Compatibility beats elegance here, and the differences are deliberate:**
@@ -246,7 +246,7 @@ async def create_speech(body: SpeechRequest, request: Request) -> Response:
     # failure -- a generation that dies here is still a status code, where a stream that dies
     # mid-body is a truncated file.
     async with engine.reserve():
-        wav = await engine.generate(body.input, voice, params=None, seed=None)
+        wav = await engine.generate(body.input, voice, params=None)
     samples = np.asarray(wav, dtype=np.float32)
     payload = await asyncio.to_thread(_encode_whole, samples, fmt, rate, engine.sample_rate)
     headers = _headers(fmt, rate, voice) | {
@@ -403,7 +403,7 @@ async def _audio_body(
         # aclosing, because a client that hangs up mid-stream closes this generator, and only
         # an explicit aclose passes that on to the model's iterator; without it the abandoned
         # generation stays in flight and the next request is told the server is busy.
-        stream = engine.stream(text, voice, params=None, seed=None)
+        stream = engine.stream(text, voice, params=None)
         async with aclosing(stream) as frames:
             async for frame in frames:
                 if not frame.samples.size:
@@ -480,7 +480,7 @@ async def _chunks(
             yield chunk
         return
     try:
-        wav = await engine.generate(text, voice, params=None, seed=None)
+        wav = await engine.generate(text, voice, params=None)
         samples = np.asarray(wav, dtype=np.float32)
         yield await asyncio.to_thread(_encode_whole, samples, fmt, rate, engine.sample_rate)
     except Exception:

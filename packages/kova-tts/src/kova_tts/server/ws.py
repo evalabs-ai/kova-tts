@@ -238,9 +238,9 @@ class _Model:
         """Resolve a voice and put the LM into its weights. Blocking; call inside a thread."""
         return self._tts._prepare(voice)
 
-    def sampling(self, voice: Any, params: Any, seed: int | None) -> Any:
-        """The sampler for this voice, with the session's overrides and seed applied."""
-        return self._tts._sampling(voice, params, seed)
+    def sampling(self, voice: Any, params: Any) -> Any:
+        """The sampler for this voice, with the session's overrides applied."""
+        return self._tts._sampling(voice, params)
 
     def prompt_ids(self, text: str, voice: Any, carry: Any, params: Any) -> list[int]:
         """Tokens for one burst, continuing `carry`. Blocking; call inside a thread."""
@@ -544,7 +544,7 @@ class Session:
         queue = await self._open_turn()
         async with self.engine.reserve():
             voice = await asyncio.to_thread(self.model.prepare, self.speaker)
-            params = self.model.sampling(voice, self.params, self.start.seed)
+            params = self.model.sampling(voice, self.params)
             if not final:
                 params = params.replace(max_tokens=max(room, 1))
             ids = await self._prompt_ids(chunk, voice, params)
@@ -776,7 +776,6 @@ class Session:
             voice=self.start.voice,
             reference=reference,
             sampling=self.start.sampling,
-            seed=self.start.seed,
             response_format=self.response_format,
         )
 

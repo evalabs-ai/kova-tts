@@ -6,7 +6,7 @@ Nothing but the standard library, so this doubles as the protocol specification.
 exchange is one HTTP request:
 
     POST /v1/tts/stream
-    {"text": "...", "voice": null, "seed": null, "sampling": {"temperature": 0.9}}
+    {"text": "...", "voice": null, "sampling": {"temperature": 0.9}}
 
 and a ``text/event-stream`` response of blocks separated by a blank line::
 
@@ -39,7 +39,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("text", help="what to say")
     parser.add_argument("--server", default="http://127.0.0.1:8000", help="base URL")
     parser.add_argument("--voice", default=None, help="a voice name from GET /v1/voices")
-    parser.add_argument("--seed", type=int, default=None, help="fix the sampler")
     parser.add_argument("--out", default="stream_sse_output.wav", help="where to write the wav")
     return parser.parse_args(argv)
 
@@ -70,7 +69,7 @@ def stream(server: str, body: dict):
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    body = {"text": args.text, "voice": args.voice, "seed": args.seed}
+    body = {"text": args.text, "voice": args.voice}
 
     audio = bytearray()
     sample_rate = 48000

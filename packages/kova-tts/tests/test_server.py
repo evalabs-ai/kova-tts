@@ -217,7 +217,7 @@ class StubTTS:
     """A :class:`~kova_tts.engine.tts.KovaTTS` that makes tones instead of speech.
 
     Records the arguments of every call, so a test can prove that a request's voice, sampling
-    overrides and seed reached the model rather than being dropped on the way. ``calls`` covers
+    overrides reached the model rather than being dropped on the way. ``calls`` covers
     the whole-text methods; ``prompts`` covers the session path, one entry per burst, including
     what it was given to continue from and the prompt string that was really encoded.
 
@@ -262,16 +262,16 @@ class StubTTS:
             raise MissingArtifact(f"No voice named {name!r}. Available: {', '.join(self._voices)}.")
         return Voice(name=name, lora_path=Path("adapters") / name)
 
-    def generate(self, text, voice=None, *, params=None, seed=None) -> np.ndarray:
-        self._record(text, voice, params, seed)
+    def generate(self, text, voice=None, *, params=None) -> np.ndarray:
+        self._record(text, voice, params)
         self.entered.set()
         self.release.wait(timeout=10)
         if self._fail is not None:
             raise self._fail
         return _tone(speech_samples(text))
 
-    def stream(self, text, voice=None, *, params=None, seed=None):
-        self._record(text, voice, params, seed)
+    def stream(self, text, voice=None, *, params=None):
+        self._record(text, voice, params)
         wav = _tone(speech_samples(text))
         self.entered.set()
         self.release.wait(timeout=10)
@@ -282,10 +282,10 @@ class StubTTS:
         # The real stream always ends with a final frame, empty or not.
         yield AudioFrame(np.zeros(0, dtype=np.float32), OUTPUT_SAMPLE_RATE, is_final=True)
 
-    def _record(self, text, voice, params, seed) -> None:
+    def _record(self, text, voice, params) -> None:
         if voice is not None:
             self.voice(voice)  # the real facade resolves the voice before it generates anything
-        self.calls.append({"text": text, "voice": voice, "params": params, "seed": seed})
+        self.calls.append({"text": text, "voice": voice, "params": params})
 
     # -- the surface a session drives ----------------------------------------------------
 
@@ -457,10 +457,9 @@ class TestSynthesis:
         assert inside.size == recovered.size
         assert np.allclose(inside, recovered, atol=1e-4)
 
-    def test_the_voice_and_seed_reach_the_model(self, client, tts):
-        client.post("/v1/tts", json={"text": "Speak.", "voice": "some-voice", "seed": 7})
+    def test_the_voice_reaches_the_model(self, client, tts):
+        client.post("/v1/tts", json={"text": "Speak.", "voice": "some-voice"})
         assert tts.calls[-1]["voice"] == "some-voice"
-        assert tts.calls[-1]["seed"] == 7
 
     def test_no_overrides_leaves_the_preset_to_the_model(self, client, tts):
         client.post("/v1/tts", json={"text": "Speak."})
@@ -841,10 +840,9 @@ class TestWebSocketSession:
 
     def test_the_echoed_configuration_fills_in_defaults(self, client):
         with client.websocket_connect("/v1/ws") as ws:
-            ws.send_json({"start_context": {"voice": "some-voice", "seed": 3}})
+            ws.send_json({"start_context": {"voice": "some-voice"}})
             started = ws.receive_json()["context_started"]
             assert started["voice"] == "some-voice"
-            assert started["seed"] == 3
             assert started["response_format"] == {
                 "encoding": "pcm",
                 "sample_rate": OUTPUT_SAMPLE_RATE,
@@ -857,7 +855,6 @@ class TestWebSocketSession:
                 {
                     "start_context": {
                         "voice": "some-voice",
-                        "seed": 11,
                         "sampling": {"top_k": 5},
                     }
                 }
@@ -869,7 +866,6 @@ class TestWebSocketSession:
 
         prompt = tts.prompts[-1]
         assert prompt["voice"].name == "some-voice"
-        assert prompt["params"].seed == 11
         assert prompt["params"].top_k == 5
 
     def test_text_below_the_threshold_is_buffered_until_a_flush(self, client, tts):
@@ -1579,7 +1575,7 @@ class TestWebSocketErrors:
             ws.send_json({"start_context": {}})
             started = ws.receive_json()["context_started"]
             assert "voice" not in started
-            assert "seed" not in started
+            assert "sampling" not in started
             ws.send_json({"close_context": True, "flush_id": "x"})
             _drain(ws)
 

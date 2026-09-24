@@ -133,32 +133,9 @@ class TestSample:
             == 1
         )
 
-    def test_the_same_seed_gives_the_same_draw(self):
-        values = torch.randn(64, generator=torch.Generator().manual_seed(0))
-        first = [
-            int(
-                sampling.sample(values, temperature=1.0, generator=torch.Generator().manual_seed(7))
-            )
-            for _ in range(3)
-        ]
-        assert len(set(first)) == 1
-
-    def test_different_seeds_eventually_differ(self):
-        values = torch.zeros(1000)  # uniform: any two seeds almost surely disagree
-        draws = {
-            int(
-                sampling.sample(values, temperature=1.0, generator=torch.Generator().manual_seed(s))
-            )
-            for s in range(8)
-        }
-        assert len(draws) > 1
-
     def test_masked_tokens_are_never_drawn(self):
         values = logits(10.0, 9.9, 0.0, 0.0)
-        gen = torch.Generator().manual_seed(3)
-        drawn = {
-            int(sampling.sample(values, temperature=1.0, top_k=2, generator=gen)) for _ in range(50)
-        }
+        drawn = {int(sampling.sample(values, temperature=1.0, top_k=2)) for _ in range(50)}
         assert drawn <= {0, 1}
 
     def test_top_p_and_top_k_compose_in_the_documented_order(self):
@@ -166,10 +143,11 @@ class TestSample:
         expected = sampling.apply_top_p(
             sampling.apply_top_k(sampling.apply_temperature(values, 0.5), 3), 0.9
         )
-        gen_a = torch.Generator().manual_seed(11)
-        gen_b = torch.Generator().manual_seed(11)
-        drawn = int(sampling.sample(values, temperature=0.5, top_k=3, top_p=0.9, generator=gen_a))
-        wanted = int(torch.multinomial(torch.softmax(expected, -1), 1, generator=gen_b)[0])
+        # One draw each from the same random state: equal only if the filters ran in this order.
+        state = torch.random.get_rng_state()
+        drawn = int(sampling.sample(values, temperature=0.5, top_k=3, top_p=0.9))
+        torch.random.set_rng_state(state)
+        wanted = int(torch.multinomial(torch.softmax(expected, -1), 1)[0])
         assert drawn == wanted
 
     def test_rejects_a_batch_of_logits(self):

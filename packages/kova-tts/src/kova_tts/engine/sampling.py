@@ -133,15 +133,11 @@ def sample(
     top_k: int = 0,
     repetition_penalty: float = 1.0,
     previous: torch.Tensor | None = None,
-    generator: torch.Generator | None = None,
 ) -> torch.Tensor:
     """Sample one token index from a single row of logits.
 
     Returns a 0-dim long tensor on the logits' device, so the caller decides when to pay for
     the device-to-host copy.
-
-    Pass `generator` (on the same device as `logits`) to make a run reproducible; without one,
-    the global RNG is used.
     """
     _check_row(logits)
     scores = logits.float()
@@ -153,4 +149,4 @@ def sample(
     scores = apply_top_k(scores, top_k)
     scores = apply_top_p(scores, top_p)
     probabilities = torch.softmax(scores, dim=-1)
-    return torch.multinomial(probabilities, 1, generator=generator)[0]
+    return torch.multinomial(probabilities, 1)[0]

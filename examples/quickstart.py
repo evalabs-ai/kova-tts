@@ -19,6 +19,6 @@ tts = KovaTTS.from_pretrained()
 # A LoRA voice is a name from `tts.voices()`; with none installed, this is the base voice.
 print("voices available:", ", ".join(tts.voices()) or "none")
 
-wav = tts.generate(TEXT, seed=7)
+wav = tts.generate(TEXT)
 out = tts.save(wav, "out.wav")
 print(f"{out}: {wav.size / tts.sample_rate:.1f} seconds of audio")

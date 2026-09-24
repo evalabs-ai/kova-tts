@@ -159,7 +159,7 @@ def run(args: argparse.Namespace, strategy: str) -> dict:
 
     with connect(args.server.rstrip("/") + "/v1/ws", max_size=None) as ws:
         session = Session(ws, args.rate)
-        session.send({"start_context": {"seed": args.seed, "response_format": response_format}})
+        session.send({"start_context": {"response_format": response_format}})
         opening = json.loads(ws.recv())
         if "error" in opening:
             raise SystemExit(f"error: {opening['error']}")
@@ -289,7 +289,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="milliseconds between flushes for the timer strategy (default: 500)",
     )
     parser.add_argument("--rate", type=int, default=16000, help="output sample rate")
-    parser.add_argument("--seed", type=int, default=None, help="fix the sampler")
     parser.add_argument(
         "--repeat", type=int, default=1, help="runs per strategy; the median is reported"
     )

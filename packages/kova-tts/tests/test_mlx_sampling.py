@@ -120,12 +120,6 @@ class TestComposed:
 
 
 class TestDraw:
-    def test_a_seed_makes_the_draw_repeatable(self, logits):
-        _, m = pair(logits)
-        first = mlx_sampling.sample(m, temperature=1.1, top_k=75, key=mx.random.key(7))
-        second = mlx_sampling.sample(m, temperature=1.1, top_k=75, key=mx.random.key(7))
-        assert int(first) == int(second)
-
     def test_only_surviving_tokens_are_ever_drawn(self, logits):
         _, m = pair(logits)
         survivors = {
@@ -133,10 +127,7 @@ class TestDraw:
             for index, value in enumerate(np.array(mlx_sampling.apply_top_k(m, 5)))
             if not np.isneginf(value)
         }
-        drawn = {
-            int(mlx_sampling.sample(m, temperature=1.0, top_k=5, key=mx.random.key(seed)))
-            for seed in range(64)
-        }
+        drawn = {int(mlx_sampling.sample(m, temperature=1.0, top_k=5)) for _ in range(64)}
         assert drawn <= survivors
 
     def test_a_row_of_logits_is_required(self):

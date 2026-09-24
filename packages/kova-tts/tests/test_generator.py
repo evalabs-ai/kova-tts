@@ -171,13 +171,13 @@ class TestTinyModelLoop:
 
     def test_every_generated_code_is_inside_the_codebook(self, tiny_generator):
         codes = tiny_generator.generate(
-            audio_prompt(tiny_generator, [7]), TTS_SAMPLING.replace(max_tokens=64, seed=1)
+            audio_prompt(tiny_generator, [7]), TTS_SAMPLING.replace(max_tokens=64)
         )
         assert codes and all(0 <= c < CODEBOOK_SIZE for c in codes)
 
     def test_max_tokens_caps_the_generation(self, tiny_generator):
         codes = tiny_generator.generate(
-            audio_prompt(tiny_generator, [7]), TTS_SAMPLING.replace(max_tokens=12, seed=1)
+            audio_prompt(tiny_generator, [7]), TTS_SAMPLING.replace(max_tokens=12)
         )
         assert len(codes) == 12
 
@@ -196,7 +196,7 @@ class TestTinyModelLoop:
 
     def test_the_cache_budget_shortens_max_tokens(self, tiny_generator):
         prompt = audio_prompt(tiny_generator, list(range(200)))
-        codes = tiny_generator.generate(prompt, TTS_SAMPLING.replace(max_tokens=2048, seed=1))
+        codes = tiny_generator.generate(prompt, TTS_SAMPLING.replace(max_tokens=2048))
         assert len(codes) == tiny_generator.max_cache_len - len(tiny_generator.encode(prompt))
 
     def test_a_prompt_longer_than_the_cache_says_what_to_do(self, tiny_generator):
@@ -204,22 +204,11 @@ class TestTinyModelLoop:
         with pytest.raises(ValueError, match="max_cache_len"):
             tiny_generator.generate(prompt)
 
-    def test_the_same_seed_reproduces_the_same_codes(self, tiny_generator):
-        params = TTS_SAMPLING.replace(max_tokens=24, seed=99)
-        prompt = audio_prompt(tiny_generator, [3, 4])
-        assert tiny_generator.generate(prompt, params) == tiny_generator.generate(prompt, params)
-
-    def test_a_different_seed_gives_different_codes(self, tiny_generator):
-        prompt = audio_prompt(tiny_generator, [3, 4])
-        first = tiny_generator.generate(prompt, TTS_SAMPLING.replace(max_tokens=24, seed=1))
-        second = tiny_generator.generate(prompt, TTS_SAMPLING.replace(max_tokens=24, seed=2))
-        assert first != second
-
     def test_streaming_and_blocking_agree(self, tiny_generator):
-        params = TTS_SAMPLING.replace(max_tokens=20, seed=5)
+        params = TTS_SAMPLING.replace(max_tokens=20)
         prompt = audio_prompt(tiny_generator, [1])
-        assert list(tiny_generator.stream(prompt, params)) == tiny_generator.generate(
-            prompt, params
+        assert list(tiny_generator.stream(prompt, params, greedy=True)) == tiny_generator.generate(
+            prompt, params, greedy=True
         )
 
     def test_audio_tokens_in_the_prompt_count_as_already_seen(self, tiny_generator):
@@ -235,7 +224,7 @@ class TestTinyModelLoop:
 
     def test_two_streams_at_once_are_refused(self, tiny_generator):
         prompt = audio_prompt(tiny_generator, [1])
-        first = tiny_generator.stream(prompt, TTS_SAMPLING.replace(max_tokens=8, seed=1))
+        first = tiny_generator.stream(prompt, TTS_SAMPLING.replace(max_tokens=8))
         next(first)
         with pytest.raises(RuntimeError, match="batch size is 1|Batch size is 1"):
             tiny_generator.generate(prompt)
@@ -243,10 +232,10 @@ class TestTinyModelLoop:
 
     def test_an_abandoned_stream_releases_the_generator(self, tiny_generator):
         prompt = audio_prompt(tiny_generator, [1])
-        stream = tiny_generator.stream(prompt, TTS_SAMPLING.replace(max_tokens=8, seed=1))
+        stream = tiny_generator.stream(prompt, TTS_SAMPLING.replace(max_tokens=8))
         next(stream)
         stream.close()
-        assert tiny_generator.generate(prompt, TTS_SAMPLING.replace(max_tokens=4, seed=1))
+        assert tiny_generator.generate(prompt, TTS_SAMPLING.replace(max_tokens=4))
 
 
 # ------------------------------------------------------------------------------ graph capture
@@ -372,17 +361,8 @@ def test_the_cuda_graph_and_the_eager_loop_agree(real_generator, real_prompt):
 @pytest.mark.gpu
 @pytest.mark.weights
 def test_a_real_generation_stops_on_its_own_inside_the_codebook(real_generator, real_prompt):
-    codes = real_generator.generate(real_prompt, TTS_SAMPLING.replace(max_tokens=900, seed=7))
+    codes = real_generator.generate(real_prompt, TTS_SAMPLING.replace(max_tokens=900))
     assert len(codes) > 40, "less than half a second of speech for a whole sentence"
     assert len(codes) < 900, "generation ran to the token limit instead of stopping on EOS"
     assert all(0 <= c < CODEBOOK_SIZE for c in codes)
     assert len(set(codes)) > len(codes) // 4, "the codes barely move; this is not speech"
-
-
-@pytest.mark.gpu
-@pytest.mark.weights
-def test_a_seed_reproduces_a_real_generation(real_generator, real_prompt):
-    params = TTS_SAMPLING.replace(max_tokens=64, seed=1234)
-    assert real_generator.generate(real_prompt, params) == real_generator.generate(
-        real_prompt, params
-    )

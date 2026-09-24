@@ -20,7 +20,7 @@ session is already speaking; it only asks for more endings than the reply has.
 
 Frames, in the order they occur. Client to server::
 
-    {"start_context": {"voice": null, "reference": null, "seed": null, "sampling": null,
+    {"start_context": {"voice": null, "reference": null, "sampling": null,
                        "response_format": {"encoding": "pcm", "sample_rate": 48000}}}
     {"send_text": "some text "}          repeat as often as you like
     {"flush": true, "flush_id": "s0"}    end the turn: finish everything sent so far
@@ -94,7 +94,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="what the reference recording says, word for word. Required when cloning",
     )
-    parser.add_argument("--seed", type=int, default=None, help="fix the sampler")
     parser.add_argument(
         "--format",
         default="pcm",
@@ -153,7 +152,6 @@ def run(args: argparse.Namespace) -> tuple[bytes, dict]:
                     "start_context": {
                         "voice": args.voice,
                         "reference": clip,
-                        "seed": args.seed,
                         "response_format": response_format,
                     }
                 }

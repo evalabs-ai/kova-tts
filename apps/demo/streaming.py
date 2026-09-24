@@ -83,9 +83,7 @@ def add_stream_route(app: FastAPI, session: DemoSession, *, path: str = STREAM_P
         # not thread-safe and the first two visitors would otherwise both pay for it.
         await session.acquire()
         try:
-            frames = await asyncio.to_thread(
-                session.frames, body.text, body.voice, params=params, seed=body.seed
-            )
+            frames = await asyncio.to_thread(session.frames, body.text, body.voice, params=params)
         except BaseException:
             session.release()
             raise

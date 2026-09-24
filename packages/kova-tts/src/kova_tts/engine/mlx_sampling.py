@@ -20,8 +20,6 @@ graph is built and a disabled stage costs nothing at all.
 
 from __future__ import annotations
 
-from typing import Any
-
 import mlx.core as mx
 
 #: Logit value used to mask a token out. ``-inf`` is exact under softmax and survives division
@@ -102,14 +100,11 @@ def sample(
     top_k: int = 0,
     repetition_penalty: float = 1.0,
     previous: mx.array | None = None,
-    key: Any | None = None,
 ) -> mx.array:
     """Sample one token index from a single row of logits.
 
     Returns a scalar array, unevaluated: the caller decides when to pay for the trip to the
     host, and the point of this module is that it can queue the next decode step first.
-
-    `key` is an MLX PRNG key. ``None`` draws from the global generator.
     """
     if logits.ndim != 1:
         raise ValueError(
@@ -124,4 +119,4 @@ def sample(
     scores = apply_temperature(scores, temperature)
     scores = apply_top_k(scores, top_k)
     scores = apply_top_p(scores, top_p)
-    return mx.random.categorical(scores, key=key)
+    return mx.random.categorical(scores)

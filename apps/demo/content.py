@@ -147,9 +147,9 @@ PLAYER_HTML = f"""
 #: What the Speak button runs. Gradio hands a browser-side handler the values of `inputs`, in
 #: order, so this signature is the ``controls`` list in :func:`~ui.build_ui`.
 SPEAK_JS = """
-(text, voice, temperature, top_p, top_k, repetition_penalty, max_tokens, seed) =>
+(text, voice, temperature, top_p, top_k, repetition_penalty, max_tokens) =>
   window.kovaDemo.speak({
-    text, voice, temperature, top_p, top_k, repetition_penalty, max_tokens, seed
+    text, voice, temperature, top_p, top_k, repetition_penalty, max_tokens
   })
 """
 

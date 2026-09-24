@@ -106,7 +106,7 @@ Warm, batch 1, on the base M1.
 
 Read those loosely. Run-to-run spread on this machine is about ±8% — bigger than most of the
 differences anyone will want to draw from the table — and the end-to-end row is the median of
-two texts at two seeds. **A base M1 does not clear real time.** The LM rows are the opposite
+two texts, two runs each. **A base M1 does not clear real time.** The LM rows are the opposite
 kind of number: measured warm with a short KV cache and no prefill, which is the *best* a step
 ever goes, and a real utterance pays both.
 

@@ -40,9 +40,6 @@ Sampling on the host instead costs 8%: 74.9 tok/s against 81.6 on a base M1, 0.9
 against 1.02x. The price is one wasted decode step per generation, discarded when the token
 before it turns out to be ``<|speech_end|>``.
 
-**Seeds are per backend.** ``SamplingParams.seed`` makes a run here reproducible, but MLX's
-generator is not torch's, so the same seed gives different audio on the two backends. They
-sample from the same distribution; they do not walk it in the same order.
 """
 
 from __future__ import annotations
@@ -303,12 +300,10 @@ class MLXGenerator:
         greedy: bool,
     ) -> Iterator[int]:
         """Decode, keeping exactly one step of work in flight ahead of the host."""
-        state = mx.random.key(params.seed) if params.seed is not None else None
         temperature = 0.0 if greedy else params.temperature
 
         logits, seen = self._prefill(ids)
-        state, draw = _split(state)
-        token, seen = self._sample(logits, seen, params, draw, temperature)
+        token, seen = self._sample(logits, seen, params, temperature)
         mx.async_eval(token, seen)
 
         for step in range(budget):
@@ -316,9 +311,8 @@ class MLXGenerator:
             if step + 1 < budget:
                 # Queued *before* the host looks at this step's token, so the GPU has the next
                 # step to work on while the copy and the consumer's frame both happen.
-                state, draw = _split(state)
                 next_logits = self._forward(token)
-                pending = self._sample(next_logits, seen, params, draw, temperature)
+                pending = self._sample(next_logits, seen, params, temperature)
                 mx.async_eval(*pending)
 
             code = int(self._row_to_code[int(token)])
@@ -369,7 +363,6 @@ class MLXGenerator:
         logits: mx.array,
         seen: mx.array,
         params: SamplingParams,
-        key: Any | None,
         temperature: float,
     ) -> tuple[mx.array, mx.array]:
         """Draw one row and fold it into the seen mask, all inside the graph."""
@@ -380,22 +373,8 @@ class MLXGenerator:
             top_k=params.top_k,
             repetition_penalty=params.repetition_penalty,
             previous=seen,
-            key=key,
         )
         return token, seen | (self._rows == token)
-
-
-def _split(state: Any | None) -> tuple[Any | None, Any | None]:
-    """Advance an MLX PRNG state, returning the new state and a key to draw with.
-
-    ``None`` means "no seed was asked for" and passes straight through, which draws from MLX's
-    global generator. Splitting rather than reusing keeps the key that produced a token from
-    also being the key that produces the next one.
-    """
-    if state is None:
-        return None, None
-    keys = mx.random.split(state)
-    return keys[0], keys[1]
 
 
 def _head_geometry(path: Path) -> tuple[int, int]:
