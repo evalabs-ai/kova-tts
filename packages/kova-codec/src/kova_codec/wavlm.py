@@ -37,6 +37,7 @@ class WavLMFeatures(nn.Module):
         from transformers import WavLMModel
 
         self.layer = layer
+        self.sample_rate = sample_rate
         self.resample = Resample(orig_freq=SAMPLE_RATE, new_freq=sample_rate)
         self.wavlm = WavLMModel.from_pretrained(model_name)
         self.wavlm.eval()
@@ -45,11 +46,22 @@ class WavLMFeatures(nn.Module):
             self.to(device)
 
     @torch.inference_mode()
-    def forward(self, wav_32k: torch.Tensor) -> torch.Tensor:
-        """Mono 32 kHz audio ``[T]`` or ``[B, T]`` -> hidden states ``[B, T_ssl, 1024]``."""
-        if wav_32k.dim() == 1:
-            wav_32k = wav_32k.unsqueeze(0)
+    def forward(self, wav: torch.Tensor, input_sample_rate: int = SAMPLE_RATE) -> torch.Tensor:
+        """Mono audio ``[T]`` or ``[B, T]`` -> hidden states ``[B, T_ssl, 1024]``.
+
+        32 kHz input goes through the resampler; input already at WavLM's own 16 kHz is fed
+        to it as is.
+        """
+        if wav.dim() == 1:
+            wav = wav.unsqueeze(0)
         device = next(self.wavlm.parameters()).device
-        wav_32k = wav_32k.to(device=device, dtype=torch.float32)
-        outputs = self.wavlm(self.resample(wav_32k), output_hidden_states=True)
+        wav = wav.to(device=device, dtype=torch.float32)
+        if input_sample_rate == SAMPLE_RATE:
+            wav = self.resample(wav)
+        elif input_sample_rate != self.sample_rate:
+            raise ValueError(
+                f"WavLM features take {SAMPLE_RATE} or {self.sample_rate} Hz audio, "
+                f"got {input_sample_rate}."
+            )
+        outputs = self.wavlm(wav, output_hidden_states=True)
         return outputs.hidden_states[self.layer]

@@ -299,18 +299,16 @@ class KovaTTS:
         this package deliberately does not ship: pass `transcriber` to the constructor, or give
         the transcript yourself.
 
-        A file is resampled on the way in. A waveform is taken to be at `sample_rate`, which
+        A file's rate is read from its header. A waveform is taken to be at `sample_rate`, which
         defaults to the encoder's 32 kHz (:data:`~kova_codec.constants.SAMPLE_RATE`) rather than
         to :attr:`sample_rate` -- so to clone from this model's own output, pass
-        ``sample_rate=tts.sample_rate``.
+        ``sample_rate=tts.sample_rate``. A recording made at 16 kHz or below is encoded natively
+        at 16 kHz.
         """
         if transcript is None:
             transcript = self._transcribe(audio)
-        if isinstance(audio, np.ndarray):
-            audio = audio_io.resample(audio, int(sample_rate), SAMPLE_RATE)
-        # The encoder takes 32 kHz whatever rate the decoder produces.
         return voices_module.from_audio(
-            audio, transcript, codec=self.encoding_codec, name=name, sample_rate=SAMPLE_RATE
+            audio, transcript, codec=self.encoding_codec, name=name, sample_rate=int(sample_rate)
         )
 
     def _transcribe(self, audio: str | os.PathLike[str] | np.ndarray) -> str:

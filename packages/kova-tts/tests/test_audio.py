@@ -648,3 +648,23 @@ class TestTrimLeading:
     def test_keeps_the_tail_samples(self):
         wav = np.arange(10, dtype=np.float32)
         assert np.array_equal(audio.trim_leading(wav, 4 / OUTPUT_SAMPLE_RATE), wav[4:])
+
+
+class TestEncoderInputRate:
+    """Which rate a source is encoded at: natively at 16 kHz when that is all it ever had."""
+
+    @pytest.mark.parametrize("source", [8_000, 11_025, 16_000])
+    def test_a_narrowband_source_is_encoded_natively(self, source):
+        assert audio.encoder_input_rate(source) == 16_000
+
+    @pytest.mark.parametrize("source", [22_050, 24_000, 32_000, 44_100, 48_000])
+    def test_anything_wider_goes_in_at_32k(self, source):
+        assert audio.encoder_input_rate(source) == 32_000
+
+    def test_file_sample_rate_reads_the_header(self, tmp_path):
+        path = audio.save_wav(tmp_path / "phone.wav", sine(0.2, rate=16_000), 16_000)
+        assert audio.file_sample_rate(path) == 16_000
+
+    def test_file_sample_rate_of_a_missing_file(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            audio.file_sample_rate(tmp_path / "nope.wav")

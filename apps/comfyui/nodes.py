@@ -22,7 +22,7 @@ from typing import Any
 from kova_codec.constants import OUTPUT_SAMPLE_RATE, SAMPLE_RATE
 from kova_tts import TTS_SAMPLING, SamplingParams
 
-from .audio import from_comfy_audio, to_comfy_audio
+from .audio import native_comfy_audio, to_comfy_audio
 
 log = logging.getLogger("kova_tts.comfyui")
 
@@ -309,13 +309,14 @@ class KovaTTSCloneVoice:
         name: str = "cloned",
         transcript: str = "",
     ) -> tuple[Any]:
-        # The encoder takes 32 kHz, whatever rate the model speaks at.
-        wav = from_comfy_audio(audio, SAMPLE_RATE)
+        # Kept at the rate it came in at: cloning decides what the encoder gets, and a 16 kHz
+        # recording is encoded natively at 16 kHz.
+        wav, rate = native_comfy_audio(audio)
         text = _clean(transcript)
         voice_name = _clean(name) or "cloned"
 
         if text is not None:
-            return (tts.clone(wav, text, name=voice_name),)
+            return (tts.clone(wav, text, name=voice_name, sample_rate=rate),)
 
         if getattr(tts, "transcriber", None) is None:
             raise ValueError(
@@ -326,7 +327,7 @@ class KovaTTSCloneVoice:
         # whole cost of not making the user type the transcript, and the file goes away again.
         with tempfile.TemporaryDirectory(prefix="kova-clone-") as directory:
             reference = Path(directory) / "reference.wav"
-            tts.save(wav, reference)
+            tts.save(wav, reference, rate)
             return (tts.clone(reference, name=voice_name),)
 
 

@@ -10,7 +10,13 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from kova_codec.constants import HOP_LENGTH, TOKEN_RATE, WAVLM_MODEL
+from kova_codec.constants import (
+    HOP_LENGTH,
+    LOW_SAMPLE_RATE,
+    SAMPLE_RATE,
+    TOKEN_RATE,
+    WAVLM_MODEL,
+)
 from kova_codec.devices import default_device, is_accelerator
 from kova_codec.vq.codec_decoder import CodecDecoder
 from kova_codec.vq.codec_encoder import CodecEncoder
@@ -37,6 +43,11 @@ class KovaCodec(torch.nn.Module):
     which the checkpoint decides -- 48 kHz and :attr:`hop_length` 600 for the shipped decoder,
     32 kHz and 400 for the older one. Both sit on the same 80 codes/second grid, so a code
     sequence decodes with either.
+
+    A dual-rate checkpoint also encodes 16 kHz audio natively, through a small trained stem in
+    front of the shared encoder: ``encode(wav, input_sample_rate=16000)``. Its codes sit in the
+    same token space as the 32 kHz path's -- close, not identical -- so every decoder reads them.
+    :attr:`supported_input_sample_rates` says what a loaded checkpoint accepts.
 
     Prefer :meth:`from_checkpoint` over calling this constructor directly.
 
@@ -79,7 +90,23 @@ class KovaCodec(torch.nn.Module):
         model_cfg = _cfg_node(cfg, "model")
         encoder_cfg = _cfg_node(model_cfg, "codec_encoder")
         decoder_cfg = _cfg_node(model_cfg, "codec_decoder")
-        sem_cfg = _cfg_node(_cfg_node(cfg, "training"), "semantic")
+        training_cfg = _cfg_node(cfg, "training")
+        sem_cfg = _cfg_node(training_cfg, "semantic")
+        alignment_cfg = _cfg_node(training_cfg, "rate_alignment")
+
+        # A dual-rate checkpoint says so in its config, and carries the stem's weights. Either is
+        # enough to build the stem; strict loading below then insists the weights are all there.
+        low_rate_stem = _cfg_or(alignment_cfg, "enabled", False) or any(
+            key.removeprefix("module.").startswith("model.CodecEnc.low_rate_stem.")
+            for key in _state_dict_of(ckpt)
+        )
+        if low_rate_stem:
+            low_rate = _cfg_node(alignment_cfg, "low_sample_rate")
+            if low_rate is not None and int(low_rate) != LOW_SAMPLE_RATE:
+                raise ValueError(
+                    f"This checkpoint's low-rate stem was trained at {low_rate} Hz; "
+                    f"only {LOW_SAMPLE_RATE} is supported."
+                )
 
         ssl_dim = _cfg_node(sem_cfg, "ssl_dim") or 1024
         vq_dim = _cfg_node(decoder_cfg, "vq_dim") or 1024
@@ -92,6 +119,7 @@ class KovaCodec(torch.nn.Module):
             up_ratios=tuple(_cfg_node(encoder_cfg, "up_ratios") or (2, 2, 2, 2, 5, 5)),
             dilations=tuple(_cfg_node(encoder_cfg, "dilations") or (1, 3, 9)),
             out_channels=_cfg_node(encoder_cfg, "out_channels") or 1024,
+            low_rate_stem=low_rate_stem,
         )
         self._codec_decoder = CodecDecoder(
             in_channels=_cfg_node(decoder_cfg, "in_channels") or 1024,
@@ -119,6 +147,10 @@ class KovaCodec(torch.nn.Module):
         self.hop_length = int(self._codec_decoder.hop_length)
         #: Rate of decoded audio, in Hz.
         self.sample_rate = TOKEN_RATE * self.hop_length
+        #: Input rates :meth:`encode` accepts: 32 kHz always, and 16 kHz on a dual-rate checkpoint.
+        self.supported_input_sample_rates: tuple[int, ...] = (
+            (LOW_SAMPLE_RATE, SAMPLE_RATE) if low_rate_stem else (SAMPLE_RATE,)
+        )
 
         self._semantic_encoder = SemanticEncoder(
             input_channels=ssl_dim, code_dim=ssl_dim, encode_channels=ssl_dim
@@ -183,19 +215,7 @@ class KovaCodec(torch.nn.Module):
         log.debug("Loading codec checkpoint from %s", checkpoint_path)
         if ckpt is None:
             ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-
-        state_dict = None
-        if isinstance(ckpt, dict):
-            if "state_dict" in ckpt:
-                state_dict = ckpt["state_dict"]
-            elif "model" in ckpt:
-                model_obj = ckpt["model"]
-                if isinstance(model_obj, dict):
-                    state_dict = model_obj
-                elif hasattr(model_obj, "state_dict"):
-                    state_dict = model_obj.state_dict()
-        if not isinstance(state_dict, dict):
-            raise KeyError("Checkpoint is missing a state_dict with codec weights.")
+        state_dict = _state_dict_of(ckpt)
 
         prefixes = {
             "model.CodecEnc.": self._codec_encoder,
@@ -227,13 +247,42 @@ class KovaCodec(torch.nn.Module):
                 "Rebuild it with KovaCodec.from_checkpoint(..., wavlm=...) to encode."
             )
 
-    def encode(self, wav: torch.Tensor | np.ndarray | list[float]) -> torch.Tensor:
-        """Encode a 32 kHz mono waveform ``[T]`` or ``[B, T]`` into codes of the same rank.
+    def encoder_hop_for_sample_rate(self, input_sample_rate: int) -> int:
+        """Input samples per code at `input_sample_rate`: 400 at 32 kHz, 200 at 16 kHz.
 
-        The waveform is zero-padded up to a whole number of :data:`HOP_LENGTH` frames, so a
-        ``T``-sample input yields ``ceil(T / HOP_LENGTH)`` codes.
+        Raises ``ValueError`` for a rate this checkpoint cannot encode -- 16 kHz on a checkpoint
+        without the trained stem, or anything else.
+        """
+        if input_sample_rate == SAMPLE_RATE:
+            return HOP_LENGTH
+        hop = self._codec_encoder.low_rate_hop_length
+        if input_sample_rate == LOW_SAMPLE_RATE and hop is not None:
+            return hop
+        raise ValueError(
+            f"This codec encodes {self.supported_input_sample_rates} Hz audio, not "
+            f"{input_sample_rate}. 16 kHz needs a dual-rate checkpoint with a trained stem; "
+            f"otherwise resample to {SAMPLE_RATE}."
+        )
+
+    def encode(
+        self,
+        wav: torch.Tensor | np.ndarray | list[float],
+        *,
+        input_sample_rate: int = SAMPLE_RATE,
+    ) -> torch.Tensor:
+        """Encode a mono waveform ``[T]`` or ``[B, T]`` into codes of the same rank.
+
+        `wav` must already be at `input_sample_rate`: 32 kHz, or 16 kHz on a checkpoint listing
+        it in :attr:`supported_input_sample_rates`. Both give 80 codes per second. The waveform
+        is zero-padded up to a whole number of frames (400 samples at 32 kHz, 200 at 16 kHz), so
+        a ``T``-sample input yields ``ceil(T / hop)`` codes.
+
+        At 32 kHz a dual-rate checkpoint gives exactly the codes a 32 kHz-only one does. At
+        16 kHz the codes are close to those but not identical, and the audio has nothing above
+        8 kHz for them to describe.
         """
         self._require_encoder()
+        hop = self.encoder_hop_for_sample_rate(input_sample_rate)
         wav = _as_tensor(wav, dtype=torch.float32)
 
         if wav.numel() == 0:
@@ -245,17 +294,17 @@ class KovaCodec(torch.nn.Module):
         if unbatched:
             wav = wav.unsqueeze(0)
 
-        remainder = wav.shape[1] % HOP_LENGTH
+        remainder = wav.shape[1] % hop
         if remainder != 0:
-            wav = F.pad(wav, (0, HOP_LENGTH - remainder))
+            wav = F.pad(wav, (0, hop - remainder))
 
-        semantic = self._extract_wavlm_features(wav)
+        semantic = self._extract_wavlm_features(wav, input_sample_rate)
         with torch.inference_mode():
             wav_bct = wav.unsqueeze(1).to(device=self.device, dtype=self.dtype)
             sem = semantic.to(device=self.device, dtype=self.dtype)
             if sem.dim() == 2:
                 sem = sem.unsqueeze(0)
-            vq_code = self._quantize(wav_bct, sem)
+            vq_code = self._quantize(wav_bct, sem, low_rate=input_sample_rate != SAMPLE_RATE)
             # [num_quantizers, B, T] with a single quantizer -> [B, T].
             if vq_code.dim() == 3 and vq_code.shape[0] == 1:
                 vq_code = vq_code.squeeze(0)
@@ -263,9 +312,18 @@ class KovaCodec(torch.nn.Module):
                 vq_code = vq_code.squeeze(0)
             return vq_code.cpu()
 
-    def _quantize(self, wav_bct: torch.Tensor, sem_btd: torch.Tensor) -> torch.Tensor:
-        """Acoustic encoder, semantic fusion and VQ: ``[B, 1, T]`` + WavLM features -> codes."""
-        vq_emb = self._codec_encoder(wav_bct)
+    def _quantize(
+        self, wav_bct: torch.Tensor, sem_btd: torch.Tensor, *, low_rate: bool = False
+    ) -> torch.Tensor:
+        """Acoustic encoder, semantic fusion and VQ: ``[B, 1, T]`` + WavLM features -> codes.
+
+        `low_rate` routes 16 kHz audio through the stem; from there on both rates share every
+        layer, the semantic conditioning and the codebook.
+        """
+        if low_rate:
+            vq_emb = self._codec_encoder.forward_low_rate(wav_bct)
+        else:
+            vq_emb = self._codec_encoder(wav_bct)
         # WavLM runs at 50 Hz and the codec at 80 Hz, so the semantic features are stretched
         # onto the acoustic frame grid before the two are concatenated.
         sem_target = F.interpolate(
@@ -277,11 +335,13 @@ class KovaCodec(torch.nn.Module):
         _, vq_code = self._codec_decoder(vq_emb)
         return vq_code
 
-    def _extract_wavlm_features(self, wav_32k: torch.Tensor) -> torch.Tensor:
-        """WavLM layer-23 hidden states for 32 kHz audio ``[T]`` or ``[B, T]``: ``[B, T', D]``."""
+    def _extract_wavlm_features(
+        self, wav: torch.Tensor, input_sample_rate: int = SAMPLE_RATE
+    ) -> torch.Tensor:
+        """WavLM layer-23 hidden states for 32 or 16 kHz ``[T]`` or ``[B, T]``: ``[B, T', D]``."""
         self._require_encoder()
         assert self._wavlm is not None
-        return self._wavlm(wav_32k)
+        return self._wavlm(wav, input_sample_rate)
 
     # ------------------------------------------------------------------ decode
 
@@ -385,6 +445,23 @@ class KovaCodec(torch.nn.Module):
         # (h, c) each [num_layers, B, H] -> one [B, 2, num_layers, H] tensor per request.
         state_out = torch.stack(state_at_idx, dim=0).permute(2, 0, 1, 3).contiguous()
         return audio, state_out
+
+
+def _state_dict_of(ckpt: Any) -> dict[str, Any]:
+    """The weights inside a Lightning checkpoint or a plain ``{"model": ...}`` bundle."""
+    state_dict = None
+    if isinstance(ckpt, dict):
+        if "state_dict" in ckpt:
+            state_dict = ckpt["state_dict"]
+        elif "model" in ckpt:
+            model_obj = ckpt["model"]
+            if isinstance(model_obj, dict):
+                state_dict = model_obj
+            elif hasattr(model_obj, "state_dict"):
+                state_dict = model_obj.state_dict()
+    if not isinstance(state_dict, dict):
+        raise KeyError("Checkpoint is missing a state_dict with codec weights.")
+    return state_dict
 
 
 def _as_tensor(value: torch.Tensor | np.ndarray | list, *, dtype: torch.dtype) -> torch.Tensor:

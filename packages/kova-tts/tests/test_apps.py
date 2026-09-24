@@ -116,8 +116,10 @@ class FakeTTS:
         pieces = [frame.samples for frame in self.stream(text, voice, params=params, seed=seed)]
         return np.concatenate(pieces) if pieces else np.zeros(0, dtype=np.float32)
 
-    def clone(self, audio, transcript=None, *, name=None) -> Voice:
-        self.cloned.append({"audio": audio, "transcript": transcript, "name": name})
+    def clone(self, audio, transcript=None, *, name=None, sample_rate=SAMPLE_RATE) -> Voice:
+        self.cloned.append(
+            {"audio": audio, "transcript": transcript, "name": name, "sample_rate": sample_rate}
+        )
         if transcript is None:
             if self.transcriber is None:
                 raise ValueError("clone() needs the reference transcript")
@@ -702,15 +704,17 @@ def test_clone_returns_the_voice_it_declares(comfy: Any) -> None:
     assert isinstance(fake.cloned[0]["audio"], np.ndarray)
 
 
-def test_clone_hands_the_engine_audio_at_the_encoder_rate(comfy: Any) -> None:
-    """The model speaks at 48 kHz but encodes at 32 kHz; a clip has to arrive at the latter."""
+def test_clone_hands_the_engine_the_clip_at_its_own_rate(comfy: Any) -> None:
+    """Not at the model's 48 kHz, and not forced to 32 kHz either: the engine decides what the
+    encoder gets, and a 16 kHz clip is encoded natively when the encoder allows it."""
     fake = FakeTTS()
     node = comfy.NODE_CLASS_MAPPINGS["KovaTTSCloneVoice"]()
     audio = comfy.nodes.to_comfy_audio(sine(3.0, rate=16_000), 16_000)
 
     node.clone(fake, audio, "mine", "This is what the clip says.")
 
-    assert abs(fake.cloned[0]["audio"].size - 3 * SAMPLE_RATE) <= 2
+    assert fake.cloned[0]["sample_rate"] == 16_000
+    assert fake.cloned[0]["audio"].size == 3 * 16_000
 
 
 def test_clone_writes_a_file_when_it_has_to_transcribe(comfy: Any) -> None:

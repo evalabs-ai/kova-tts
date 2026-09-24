@@ -25,6 +25,11 @@ discover -> load, downmix, resample to 32 kHz -> split on silence -> trim -> -23
          -> encode -> {"text": ...} JSONL
 ```
 
+A recording made at 16 kHz or below is kept at 16 kHz rather than upsampled, and encoded
+natively through the encoder's 16 kHz path — the better choice for phone audio and most ASR
+corpora. It comes out at 80 codes a second like everything else. See
+[Voice cloning](voice-cloning.md#16-khz-recordings) for why.
+
 Three things about that order are load-bearing:
 
 - **Trim before normalise.** Leading silence drags a clip's integrated loudness down, and the

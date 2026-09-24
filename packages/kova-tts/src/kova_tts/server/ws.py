@@ -92,7 +92,7 @@ import numpy as np
 import soundfile as sf
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from kova_codec.constants import SAMPLE_RATE, codes_to_seconds
+from kova_codec.constants import codes_to_seconds
 from kova_tts import audio as audio_io
 from kova_tts import voices as voices_module
 from kova_tts.engine.types import CLONE_SAMPLING, Voice
@@ -286,13 +286,13 @@ class _Model:
         """A decoder for one turn. Blocking on first use -- the codec loads then."""
         return self._decoder(self._tts.codec)
 
-    def clone(self, wav: np.ndarray, transcript: str) -> Any:
-        """Encode a reference waveform into a voice to speak as.
+    def clone(self, wav: np.ndarray, transcript: str, sample_rate: int) -> Any:
+        """Encode a reference waveform, recorded at `sample_rate`, into a voice to speak as.
 
         Blocking, and the only call here that loads WavLM: encoding needs the half of the codec
         that decoding never touches, which is a second codec built on first use.
         """
-        return self._tts.clone(wav, transcript, name=REFERENCE_NAME)
+        return self._tts.clone(wav, transcript, name=REFERENCE_NAME, sample_rate=sample_rate)
 
     def preroll(self, voice: Any) -> tuple[int, ...]:
         """The tail of a reference the first decoder of a cloned session starts warm from."""
@@ -813,9 +813,9 @@ def _session_sampling(engine: Engine, start: wire.StartConfig) -> Any:
 
 def _encode_reference(model: _Model, reference: wire.VoiceReference) -> Any:
     """Turn a base64 recording into a voice. Blocking: decoding, resampling and WavLM."""
-    wav = _reference_waveform(reference.audio or "")
-    _check_reference_length(wav.size / SAMPLE_RATE)
-    return model.clone(wav, reference.transcript)
+    wav, rate = _reference_waveform(reference.audio or "")
+    _check_reference_length(wav.size / rate)
+    return model.clone(wav, reference.transcript, rate)
 
 
 def _voice_from_codes(reference: wire.VoiceReference) -> Voice:
@@ -830,8 +830,12 @@ def _voice_from_codes(reference: wire.VoiceReference) -> Voice:
     return Voice(name=REFERENCE_NAME, ref_codes=codes, ref_text=reference.transcript)
 
 
-def _reference_waveform(encoded: str) -> np.ndarray:
-    """Base64 of an audio file -> a mono 32 kHz waveform, or a refusal naming what went wrong.
+def _reference_waveform(encoded: str) -> tuple[np.ndarray, int]:
+    """Base64 of an audio file -> ``(mono waveform, its rate)``, or a refusal naming what went
+    wrong.
+
+    Left at the rate it was recorded at: the clone path decides what the encoder gets, and a
+    16 kHz phone recording is encoded natively where the checkpoint allows it.
 
     The two failures are told apart because they are different mistakes: one is the frame, the
     other is what was put in it.
@@ -850,7 +854,7 @@ def _reference_waveform(encoded: str) -> np.ndarray:
             f"the reference audio could not be decoded ({exc}); send a whole audio file -- wav, "
             f"flac, ogg, mp3, anything soundfile reads -- rather than raw samples"
         ) from exc
-    return audio_io.resample(audio_io.as_waveform(samples), int(rate), SAMPLE_RATE)
+    return audio_io.as_waveform(samples), int(rate)
 
 
 def _check_reference_length(seconds: float) -> None:

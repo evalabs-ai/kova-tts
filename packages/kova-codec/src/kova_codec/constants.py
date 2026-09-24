@@ -12,6 +12,12 @@ HOP_LENGTH = 400
 #: Codes per second of audio: 32000 / 400 = 80. Every decoder shares this grid.
 TOKEN_RATE = SAMPLE_RATE // HOP_LENGTH
 
+#: The second input rate a dual-rate encoder takes, through its own trained stem: 16 kHz, 200
+#: samples per code, onto the same codes. Older checkpoints take :data:`SAMPLE_RATE` only;
+#: ``KovaCodec.supported_input_sample_rates`` says which a loaded codec accepts.
+LOW_SAMPLE_RATE = 16_000
+LOW_HOP_LENGTH = LOW_SAMPLE_RATE // TOKEN_RATE
+
 #: The decoder's output: 48 kHz, 600 samples per code. This is the rate of the shipped
 #: decoder; a checkpoint states its own, and :attr:`KovaCodec.sample_rate
 #: <kova_codec.KovaCodec.sample_rate>` on a loaded codec is the one to trust.

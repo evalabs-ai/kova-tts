@@ -12,6 +12,9 @@ loading and conditioning helpers default to it. Audio coming *out* is at the dec
 Reference audio fed to the codec goes through :func:`normalize_loudness` first, so that clips
 recorded at different levels all reach it at -23 LUFS.
 
+The encoder also takes 16 kHz natively, and :func:`encoder_input_rate` decides which of the two
+a source goes in at.
+
 **Rate conversion.** The model speaks at 48 kHz; voice-agent pipelines run at 16 kHz and
 telephony at 8 kHz. :func:`resample` converts a finished waveform; :class:`StreamingResampler`
 converts a stream, and its concatenated output equals resampling the whole signal at once. A
@@ -43,7 +46,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import soundfile as sf
 
-from kova_codec.constants import OUTPUT_SAMPLE_RATE, SAMPLE_RATE, TARGET_LUFS
+from kova_codec.constants import LOW_SAMPLE_RATE, OUTPUT_SAMPLE_RATE, SAMPLE_RATE, TARGET_LUFS
 
 if TYPE_CHECKING:  # torch is imported lazily; importing this module must stay cheap.
     import torch
@@ -285,6 +288,25 @@ def resample(wav: np.ndarray, orig_rate: int, target_rate: int) -> np.ndarray:
 
 def _empty() -> np.ndarray:
     return np.zeros(0, dtype=np.float32)
+
+
+def file_sample_rate(path: str | os.PathLike[str]) -> int:
+    """The rate an audio file was recorded at, read from its header."""
+    file = Path(path).expanduser()
+    if not file.is_file():
+        raise FileNotFoundError(f"Audio file not found: {file}")
+    return int(sf.info(str(file)).samplerate)
+
+
+def encoder_input_rate(source_rate: int) -> int:
+    """The rate to hand the encoder audio that was recorded at `source_rate`.
+
+    A source at 16 kHz or below -- phone audio, most ASR corpora -- goes in at 16 kHz, through
+    the encoder's own 16 kHz path. It has nothing above 8 kHz either way, and upsampling it to
+    32 kHz first leaves the decoder with a dull top octave, where encoding it natively lets the
+    decoder fill that octave in. Everything else goes in at 32 kHz.
+    """
+    return LOW_SAMPLE_RATE if source_rate <= LOW_SAMPLE_RATE else SAMPLE_RATE
 
 
 def load_audio(path: str | os.PathLike[str], sample_rate: int = SAMPLE_RATE) -> np.ndarray:

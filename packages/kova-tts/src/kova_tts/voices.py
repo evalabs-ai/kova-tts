@@ -131,7 +131,11 @@ def from_audio(
 
     The clip is loudness-normalised to -23 LUFS before encoding, so that every reference
     reaches the codec at the same level. Passing an already-loaded waveform skips only the
-    file read, not the normalisation.
+    file read, not the normalisation; `sample_rate` is the rate that waveform is at, and is
+    ignored for a file, whose header says.
+
+    The clip goes in at the rate :func:`~kova_tts.audio.encoder_input_rate` picks: natively at
+    16 kHz when it was recorded at 16 kHz or below, and at 32 kHz otherwise.
     """
     text = (transcript or "").strip()
     if not text:
@@ -140,8 +144,13 @@ def from_audio(
             "automatic transcription is not part of this package."
         )
 
-    wav = path if isinstance(path, np.ndarray) else audio_io.load_audio(path, sample_rate)
-    wav = audio_io.as_waveform(wav)
+    source_rate = sample_rate if isinstance(path, np.ndarray) else audio_io.file_sample_rate(path)
+    rate = audio_io.encoder_input_rate(source_rate)
+    if isinstance(path, np.ndarray):
+        wav = audio_io.resample(audio_io.as_waveform(path), sample_rate, rate)
+    else:
+        wav = audio_io.load_audio(path, rate)
+    sample_rate = rate
     if wav.size < MIN_REFERENCE_SECONDS * sample_rate:
         raise ValueError(
             f"Reference audio is {wav.size / sample_rate:.2f} s; at least "
@@ -151,7 +160,7 @@ def from_audio(
         wav = wav[: int(max_seconds * sample_rate)]
 
     normalized = audio_io.normalize_loudness(wav, sample_rate)
-    codes = codec.encode(normalized)
+    codes = codec.encode(normalized, input_sample_rate=sample_rate)
     codes = np.asarray(codes.cpu() if hasattr(codes, "cpu") else codes, dtype=np.int64).reshape(-1)
     if codes.size == 0:
         raise ValueError("The reference clip encoded to no codes; it is probably silent.")

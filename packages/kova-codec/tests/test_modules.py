@@ -63,6 +63,27 @@ def test_encoder_emits_one_frame_per_hop():
     assert out.shape == (2, TINY_ENCODER["out_channels"], 10)
 
 
+def test_the_16k_stem_reaches_the_same_frame_rate_on_half_the_samples():
+    encoder = CodecEncoder(**TINY_ENCODER, low_rate_stem=True).eval()
+    assert encoder.low_rate_hop_length * 2 == encoder.hop_length == TINY_HOP
+    with torch.inference_mode():
+        full = encoder(torch.randn(2, 1, TINY_HOP * 10))
+        half = encoder.forward_low_rate(torch.randn(2, 1, TINY_HOP // 2 * 10))
+    assert half.shape == full.shape == (2, TINY_ENCODER["out_channels"], 10)
+
+
+def test_an_encoder_without_a_stem_refuses_16k():
+    encoder = CodecEncoder(**TINY_ENCODER).eval()
+    assert encoder.low_rate_stem is None and encoder.low_rate_hop_length is None
+    with pytest.raises(RuntimeError, match="16 kHz"):
+        encoder.forward_low_rate(torch.randn(1, 1, TINY_HOP * 4))
+
+
+def test_the_stem_needs_a_stride_2_first_block():
+    with pytest.raises(ValueError, match="stride-2"):
+        CodecEncoder(**{**TINY_ENCODER, "up_ratios": (5, 2, 2)}, low_rate_stem=True)
+
+
 def test_removing_weight_norm_does_not_change_the_encoder_output():
     encoder = CodecEncoder(**TINY_ENCODER).eval()
     x = torch.randn(1, 1, TINY_HOP * 8)

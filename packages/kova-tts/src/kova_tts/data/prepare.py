@@ -3,6 +3,9 @@
     discover -> load, downmix, resample to 32 kHz -> split on silence -> trim -> -23 LUFS
              -> encode -> {"text": ...} JSONL
 
+A recording made at 16 kHz or below is kept at 16 kHz rather than upsampled, and encoded
+natively through the encoder's 16 kHz path.
+
 Three things about the order are load-bearing. **Trim before normalise**, because leading
 silence drags the integrated loudness of a clip down and the gain applied would then be wrong.
 **Normalise before encode**, so every clip in the corpus reaches the codec at the same level
@@ -35,7 +38,7 @@ import numpy as np
 
 from kova_codec.constants import SAMPLE_RATE
 from kova_tts import paths, prompt
-from kova_tts.audio import load_audio, normalize_loudness
+from kova_tts.audio import encoder_input_rate, file_sample_rate, load_audio, normalize_loudness
 from kova_tts.data.discover import Clip, DiscoveryError, clean_text, discover
 from kova_tts.data.encode import Encoder, code_count, encode_clips, load_codec
 from kova_tts.data.report import (
@@ -73,6 +76,8 @@ class _Pending:
     segment: int
     wav: np.ndarray
     text: str | None
+    #: The rate `wav` is at: 16 kHz for a source recorded at or below it, 32 kHz otherwise.
+    rate: int = SAMPLE_RATE
 
     @property
     def row_id(self) -> str:
@@ -80,7 +85,7 @@ class _Pending:
 
     @property
     def seconds(self) -> float:
-        return self.wav.size / SAMPLE_RATE
+        return self.wav.size / self.rate
 
 
 # ------------------------------------------------------------------------------- corpus files
@@ -146,7 +151,8 @@ def _segment_clip(
 ) -> list[_Pending]:
     """Load one recording and turn it into trimmed, normalised, length-checked clips."""
     try:
-        wav = load_audio(clip.path, SAMPLE_RATE)
+        rate = encoder_input_rate(file_sample_rate(clip.path))
+        wav = load_audio(clip.path, rate)
     except Exception as exc:  # noqa: BLE001 - any decode failure is reported, never fatal
         result.add_skip(clip.path, UNREADABLE, _reason(exc))
         return []
@@ -158,7 +164,7 @@ def _segment_clip(
     pieces = (
         split_on_silence(
             wav,
-            SAMPLE_RATE,
+            rate,
             max_seconds=settings.max_seconds,
             top_db=settings.top_db,
             min_silence=settings.min_silence,
@@ -173,9 +179,9 @@ def _segment_clip(
     for index, piece in enumerate(pieces):
         segment = index if len(pieces) > 1 else 0
         trimmed = trim_silence(
-            piece, SAMPLE_RATE, top_db=settings.top_db, pad_seconds=settings.pad_seconds
+            piece, rate, top_db=settings.top_db, pad_seconds=settings.pad_seconds
         )
-        seconds = trimmed.size / SAMPLE_RATE
+        seconds = trimmed.size / rate
         if trimmed.size == 0:
             result.add_skip(clip.path, SILENT, "silent after trimming", segment)
             continue
@@ -202,8 +208,9 @@ def _segment_clip(
                 path=clip.path,
                 rel=rel,
                 segment=segment,
-                wav=normalize_loudness(trimmed, SAMPLE_RATE),
+                wav=normalize_loudness(trimmed, rate),
                 text=None if splittable else clip.text,
+                rate=rate,
             )
         )
     return pending
@@ -237,7 +244,7 @@ def _transcribe_pending(
         if item.text:
             kept.append(item)
             continue
-        item.text = clean_text(transcriber.transcribe(item.wav, SAMPLE_RATE))
+        item.text = clean_text(transcriber.transcribe(item.wav, item.rate))
         if not item.text:
             result.add_skip(item.path, EMPTY_TRANSCRIPT, "ASR heard no speech", item.segment)
             continue
@@ -376,7 +383,7 @@ def prepare(
     # --------------------------------------------------------------- the token budget check
     encodable: list[_Pending] = []
     for item in pending:
-        tokens = estimate_tokens(item.text or "", code_count(item.wav.size))
+        tokens = estimate_tokens(item.text or "", code_count(item.wav.size, item.rate))
         if tokens > max_tokens:
             result.add_skip(
                 item.path,
@@ -394,6 +401,7 @@ def prepare(
         encode_clips(
             encoder,
             [item.wav for item in encodable],
+            sample_rates=[item.rate for item in encodable],
             on_progress=(lambda done, total: _show(f"encoding {done}/{total} clips"))
             if progress
             else None,
@@ -414,7 +422,7 @@ def prepare(
             "audio": item.rel,
             "segment": item.segment,
             "seconds": round(item.seconds, 3),
-            "tokens": estimate_tokens(text, code_count(item.wav.size)),
+            "tokens": estimate_tokens(text, code_count(item.wav.size, item.rate)),
         }
         if not dry_run:
             row["tokens"] = estimate_tokens(text, len(codes))

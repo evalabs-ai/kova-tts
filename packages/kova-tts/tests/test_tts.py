@@ -446,7 +446,7 @@ class TestCloneErrors:
         class FakeCodec:
             device = torch.device("cpu")
 
-            def encode(self, wav):
+            def encode(self, wav, input_sample_rate=SAMPLE_RATE):
                 calls.append(np.asarray(wav).size)
                 return torch.arange(200, dtype=torch.long)
 
@@ -465,7 +465,7 @@ class TestCloneErrors:
         class FakeCodec:
             device = torch.device("cpu")
 
-            def encode(self, wav):
+            def encode(self, wav, input_sample_rate=SAMPLE_RATE):
                 seen.append(np.asarray(wav).size)
                 return torch.arange(240, dtype=torch.long)
 

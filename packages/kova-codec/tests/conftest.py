@@ -145,3 +145,11 @@ def codec(checkpoint_path: Path, wavlm_path: str, cuda_device: torch.device):
     return KovaCodec.from_checkpoint(
         checkpoint_path, device=cuda_device, dtype=torch.float32, wavlm=wavlm_path
     )
+
+
+@pytest.fixture(scope="session")
+def dual_rate_codec(codec):
+    """:func:`codec`, when ``KOVA_CODEC_PATH`` is a dual-rate checkpoint that also takes 16 kHz."""
+    if 16_000 not in codec.supported_input_sample_rates:
+        pytest.skip("KOVA_CODEC_PATH has no 16 kHz stem; point it at a dual-rate checkpoint")
+    return codec

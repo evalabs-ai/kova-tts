@@ -17,7 +17,14 @@ import math
 
 import numpy as np
 import pytest
-from test_data_synth import FakeCodec, join, mini_tokenizer, quiet, speech_like, write_wav
+from test_data_synth import (
+    FakeCodec,
+    join,
+    mini_tokenizer,
+    quiet,
+    speech_like,
+    write_wav,
+)
 
 from kova_codec.constants import HOP_LENGTH, SAMPLE_RATE
 from kova_tts.data.prepare import main, prepare, read_corpus
@@ -118,9 +125,9 @@ def test_recordings_are_normalised_before_encoding(tmp_path, codec):
             super().__init__()
             self.peaks = []
 
-        def encode(self, wav):
+        def encode(self, wav, input_sample_rate=SAMPLE_RATE):
             self.peaks += [float(np.max(np.abs(row))) for row in np.atleast_2d(np.asarray(wav))]
-            return super().encode(wav)
+            return super().encode(wav, input_sample_rate)
 
     peaks = Peaks()
     prepare(root, encoder=peaks)
@@ -522,3 +529,30 @@ def test_cli_returns_one_when_nothing_could_be_used(tmp_path, monkeypatch, capsy
 def test_cli_flags_map_onto_the_settings(recordings, capsys):
     assert main([str(recordings), "--dry-run", "--max-seconds", "1.0", "--min-seconds", "0.1"]) == 0
     assert "too long" in capsys.readouterr().out
+
+
+# ------------------------------------------------------------------------ 16 kHz sources
+
+
+def build_phone_corpus(root, count=2, seconds=2.0):
+    """Recordings made at 16 kHz, the way phone audio and most ASR corpora arrive."""
+    for index in range(count):
+        name = f"call_{index:02d}"
+        write_wav(root / f"{name}.wav", speech_like(seconds, sample_rate=16_000), 16_000)
+        (root / f"{name}.txt").write_text(f"{TEXT} Call {index}.", encoding="utf-8")
+    return root
+
+
+def test_a_16k_source_is_encoded_natively(tmp_path, codec):
+    prepare(build_phone_corpus(tmp_path / "calls"), encoder=codec)
+
+    assert codec.rates == [16_000, 16_000]
+    assert sorted(width for _, width in codec.calls) == pytest.approx([32_000, 32_000], abs=800)
+    for row in read_corpus(tmp_path / "calls" / "train.jsonl"):
+        assert len(parse_audio_tokens(row["text"])) == math.ceil(row["seconds"] * 80)
+
+
+def test_a_mixed_corpus_splits_by_source_rate(tmp_path, codec):
+    root = build_phone_corpus(build_corpus(tmp_path / "mixed", count=2), count=2)
+    prepare(root, encoder=codec)
+    assert sorted(codec.rates) == [16_000, 16_000, SAMPLE_RATE, SAMPLE_RATE]

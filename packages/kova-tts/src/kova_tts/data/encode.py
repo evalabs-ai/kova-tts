@@ -14,7 +14,7 @@ from typing import Protocol
 
 import numpy as np
 
-from kova_codec.constants import HOP_LENGTH
+from kova_codec.constants import SAMPLE_RATE, TOKEN_RATE
 from kova_tts import paths
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ class Encoder(Protocol):
     sharper assertion about the pipeline than 1.2 GB of WavLM would.
     """
 
-    def encode(self, wav: object) -> object: ...
+    def encode(self, wav: object, *, input_sample_rate: int) -> object: ...
 
 
 def load_codec(
@@ -57,31 +57,37 @@ def load_codec(
     )
 
 
-def code_count(samples: int) -> int:
-    """Codes the codec produces for a clip of `samples` samples."""
-    return math.ceil(samples / HOP_LENGTH)
+def code_count(samples: int, sample_rate: int = SAMPLE_RATE) -> int:
+    """Codes the codec produces for a clip of `samples` samples at `sample_rate`."""
+    return math.ceil(samples / (sample_rate // TOKEN_RATE))
 
 
 def encode_clips(
     encoder: Encoder,
     waveforms: Sequence[np.ndarray],
     *,
+    sample_rates: Sequence[int] | None = None,
     on_progress: Callable[[int, int], None] | None = None,
 ) -> list[list[int]]:
     """Encode every waveform, returning one list of codes per input, in input order.
 
+    `sample_rates` gives each waveform's rate -- 16 or 32 kHz, both of which the encoder takes
+    natively -- and is 32 kHz for all of them when omitted.
+
     `on_progress` is called with ``(clips_done, clips_total)`` after each clip, which is how the
     CLI shows progress on a corpus that takes minutes.
     """
+    rates = list(sample_rates) if sample_rates is not None else [SAMPLE_RATE] * len(waveforms)
     codes: list[list[int]] = []
-    for done, waveform in enumerate(waveforms, start=1):
+    for done, (waveform, rate) in enumerate(zip(waveforms, rates, strict=True), start=1):
         # Two-dimensional so the encoder always sees the same [B, T] contract.
-        encoded = np.asarray(encoder.encode(waveform[np.newaxis, :].astype(np.float32)))
+        batch = waveform[np.newaxis, :].astype(np.float32)
+        encoded = np.asarray(encoder.encode(batch, input_sample_rate=rate))
         if encoded.ndim != 2 or encoded.shape[0] != 1:
             raise ValueError(
                 f"Encoder returned shape {encoded.shape} for a single clip; expected [1, T] codes."
             )
-        codes.append(encoded[0, : code_count(waveform.size)].astype(int).tolist())
+        codes.append(encoded[0, : code_count(waveform.size, rate)].astype(int).tolist())
         if on_progress is not None:
             on_progress(done, len(waveforms))
     return codes

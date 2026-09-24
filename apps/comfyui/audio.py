@@ -33,7 +33,13 @@ def to_comfy_audio(wav: np.ndarray, sample_rate: int = OUTPUT_SAMPLE_RATE) -> di
 
 
 def from_comfy_audio(audio: dict[str, Any], sample_rate: int = SAMPLE_RATE) -> np.ndarray:
-    """``AUDIO`` dict -> 1-D float32 mono at `sample_rate`, downmixed and resampled as needed.
+    """``AUDIO`` dict -> 1-D float32 mono at `sample_rate`, downmixed and resampled as needed."""
+    mono, rate = native_comfy_audio(audio)
+    return audio_io.resample(mono, rate, int(sample_rate))
+
+
+def native_comfy_audio(audio: dict[str, Any]) -> tuple[np.ndarray, int]:
+    """``AUDIO`` dict -> ``(1-D float32 mono, the rate it is at)``, downmixed but not resampled.
 
     Only the first item of a batch is used: a voice is cloned from one recording, and silently
     averaging a batch of different speakers together would be worse than ignoring the rest.
@@ -59,4 +65,4 @@ def from_comfy_audio(audio: dict[str, Any], sample_rate: int = SAMPLE_RATE) -> n
     mono = audio_io.as_waveform(array)
     if mono.size == 0:
         raise ValueError("That AUDIO input holds no samples.")
-    return audio_io.resample(mono, int(audio["sample_rate"]), int(sample_rate))
+    return mono, int(audio["sample_rate"])

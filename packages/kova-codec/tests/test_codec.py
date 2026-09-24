@@ -13,6 +13,8 @@ from kova_codec import (
     CODE_MAX,
     CODE_MIN,
     HOP_LENGTH,
+    LOW_HOP_LENGTH,
+    LOW_SAMPLE_RATE,
     OUTPUT_HOP_LENGTH,
     OUTPUT_SAMPLE_RATE,
     SAMPLE_RATE,
@@ -229,3 +231,51 @@ def _envelope_correlation(a: torch.Tensor, b: torch.Tensor, frame: int = 400) ->
     env_a = a[:n].reshape(-1, frame).pow(2).mean(1).sqrt().numpy()
     env_b = b[:n].reshape(-1, frame).pow(2).mean(1).sqrt().numpy()
     return float(np.corrcoef(env_a, env_b)[0, 1])
+
+
+# ---------------------------------------------------------- 16 kHz input, dual-rate checkpoint
+
+
+@pytest.mark.weights
+@pytest.mark.gpu
+def test_a_32k_only_checkpoint_refuses_16k_input(codec: KovaCodec):
+    if LOW_SAMPLE_RATE in codec.supported_input_sample_rates:
+        pytest.skip("KOVA_CODEC_PATH is itself dual-rate")
+    assert codec.supported_input_sample_rates == (SAMPLE_RATE,)
+    with pytest.raises(ValueError, match="dual-rate"):
+        codec.encode(torch.zeros(LOW_SAMPLE_RATE), input_sample_rate=LOW_SAMPLE_RATE)
+
+
+@pytest.mark.weights
+@pytest.mark.gpu
+def test_16k_input_gives_80_codes_a_second(dual_rate_codec, synthetic_wav):
+    assert dual_rate_codec.supported_input_sample_rates == (LOW_SAMPLE_RATE, SAMPLE_RATE)
+    wav_16k = torchaudio.functional.resample(synthetic_wav, SAMPLE_RATE, LOW_SAMPLE_RATE)
+    codes = dual_rate_codec.encode(wav_16k, input_sample_rate=LOW_SAMPLE_RATE)
+    assert codes.shape == (math.ceil(wav_16k.numel() / LOW_HOP_LENGTH),)
+    assert codes.numel() == pytest.approx(wav_16k.numel() / LOW_SAMPLE_RATE * TOKEN_RATE, abs=1)
+    assert int(codes.min()) >= CODE_MIN and int(codes.max()) <= CODE_MAX
+    batched = dual_rate_codec.encode(torch.stack([wav_16k, wav_16k]), input_sample_rate=16_000)
+    assert batched.shape == (2, codes.numel())
+
+
+@pytest.mark.weights
+@pytest.mark.gpu
+def test_16k_input_decodes_to_real_speech(dual_rate_codec, local_speech_wav):
+    """16 kHz in, the same checkpoint's decoder out: the audio follows the original.
+
+    The codes are close to the 32 kHz path's but not identical, so nothing is asserted about
+    them. What is checked is what a listener would notice -- the envelope, and the spectrum
+    below 8 kHz, which is all a 16 kHz source ever had.
+    """
+    wav_16k = torchaudio.functional.resample(local_speech_wav, SAMPLE_RATE, LOW_SAMPLE_RATE)
+    codes = dual_rate_codec.encode(wav_16k, input_sample_rate=LOW_SAMPLE_RATE)
+    audio = dual_rate_codec.decode(codes)
+    assert audio.shape == (codes.numel() * dual_rate_codec.hop_length,)
+
+    rate = dual_rate_codec.sample_rate
+    audio = torchaudio.functional.resample(audio.float(), rate, SAMPLE_RATE)
+    reference = torchaudio.functional.resample(wav_16k, LOW_SAMPLE_RATE, SAMPLE_RATE)
+    reference = reference[: audio.numel()]
+    assert _envelope_correlation(audio, reference) > 0.9
+    assert _log_mel_l1(audio, reference) < 1.5

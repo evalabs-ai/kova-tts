@@ -22,7 +22,7 @@ from pathlib import Path
 
 import numpy as np
 
-from kova_codec.constants import HOP_LENGTH, SAMPLE_RATE
+from kova_codec.constants import SAMPLE_RATE, TOKEN_RATE
 from kova_tts.audio import save_wav
 
 #: Audio tokens the miniature tokenizer knows, and therefore the fake codec's codebook.
@@ -72,22 +72,25 @@ def write_clip(path: Path, seconds: float = 2.0, **kwargs) -> Path:
 class FakeCodec:
     """A codec-shaped object whose codes are a cheap, deterministic function of the waveform.
 
-    Records the shape of every call it was handed, so a test can assert what reached the codec
-    and that a resumed run re-encoded nothing.
+    Records the shape and rate of every call it was handed, so a test can assert what reached
+    the codec, at which rate, and that a resumed run re-encoded nothing.
     """
 
     def __init__(self, codebook: int = FAKE_CODEBOOK) -> None:
         self.codebook = codebook
         self.calls: list[tuple[int, int]] = []
+        self.rates: list[int] = []
 
     @property
     def clips_encoded(self) -> int:
         return sum(rows for rows, _ in self.calls)
 
-    def encode(self, wav) -> np.ndarray:
+    def encode(self, wav, input_sample_rate: int = SAMPLE_RATE) -> np.ndarray:
+        self.rates.append(input_sample_rate)
+        hop = input_sample_rate // TOKEN_RATE
         batch = np.atleast_2d(np.asarray(wav, dtype=np.float32))
         self.calls.append((batch.shape[0], batch.shape[1]))
-        codes = np.zeros((batch.shape[0], math.ceil(batch.shape[1] / HOP_LENGTH)), dtype=np.int64)
+        codes = np.zeros((batch.shape[0], math.ceil(batch.shape[1] / hop)), dtype=np.int64)
         for row, clip in enumerate(batch):
             # One code per hop, from that hop's own samples, so a clip's codes depend only on
             # the clip -- which is what makes resume checkable.

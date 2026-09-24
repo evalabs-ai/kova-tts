@@ -401,9 +401,9 @@ class VoiceReference(_WireModel):
     )
     audio: str | None = Field(
         default=None,
-        description="Base64 of an audio file -- anything soundfile reads. Resampled to mono "
-        "32 kHz for the encoder and loudness-normalised here, so send the recording as you "
-        "have it.",
+        description="Base64 of an audio file -- anything soundfile reads. Downmixed, resampled "
+        "for the encoder and loudness-normalised here, so send the recording as you have it. "
+        "A 16 kHz recording is encoded natively at 16 kHz.",
     )
     codes: list[int] | None = Field(
         default=None,

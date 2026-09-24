@@ -76,11 +76,24 @@ cloned.wav  1.66 s of audio in 4.5 s (0.4x)
 | Minimum | 1 second, enforced — below that the model ignores the clip and falls back to its base speaker |
 | Maximum | 20 seconds, enforced by trimming; more costs prompt, cache and decode time with no measured gain |
 | Content | One speaker, no music, no second voice, no heavy room |
-| Format | Anything `soundfile` reads; resampled to 32 kHz mono for you |
+| Format | Anything `soundfile` reads; downmixed and resampled for you — see below for 16 kHz |
 
 Loudness is normalised to −23 LUFS before encoding, so that every reference clip reaches the
 codec at the same level regardless of how it was recorded. You do not do this yourself —
 `clone` does it, whether you pass a path or an already-loaded waveform.
+
+## 16 kHz recordings
+
+The encoder takes 32 kHz, and also 16 kHz natively, through a small trained front end onto the
+same codes. That is what a reference recorded at 16 kHz or below wants: a phone call, a dataset
+built for ASR. Such a recording has nothing above 8 kHz either way.
+Upsampled to 32 kHz it reaches the decoder looking like dull audio, and the clone comes out
+dull; encoded natively, the 48 kHz decoder fills the top octave in with plausible high
+frequencies. It cannot recover the real ones.
+
+There is nothing to configure. `clone` picks the path from the recording itself: a file's header
+says its rate, and an in-memory waveform's is `clone(..., sample_rate=)` (32000 when omitted). At
+or below 16 kHz it is encoded at 16 kHz; anything wider goes in at 32 kHz.
 
 ## Sampling
 

@@ -40,7 +40,6 @@ import torch
 from fastapi.testclient import TestClient
 
 from kova_codec.constants import (
-    HOP_LENGTH,
     OUTPUT_HOP_LENGTH,
     OUTPUT_SAMPLE_RATE,
     SAMPLE_RATE,
@@ -205,12 +204,13 @@ class StubEncoder:
         #: Clips encoded so far, so a test can show that a pre-encoded reference loads nothing.
         self.encoded = 0
 
-    def encode(self, wav) -> torch.Tensor:
+    def encode(self, wav, input_sample_rate: int = SAMPLE_RATE) -> torch.Tensor:
         self.encoded += 1
         samples = np.asarray(wav, dtype=np.float32)
         if float(np.max(np.abs(samples))) < 1e-3:
             return torch.zeros(0, dtype=torch.long)
-        return torch.arange(samples.size // HOP_LENGTH, dtype=torch.long) % 8192
+        hop = input_sample_rate // TOKEN_RATE
+        return torch.arange(samples.size // hop, dtype=torch.long) % 8192
 
 
 class StubTTS:

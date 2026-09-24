@@ -29,6 +29,23 @@ same 80 codes/second grid and share the encoder and codebook, so either decodes 
 Always write or play decoded audio at `codec.sample_rate`. Encoding takes 32 kHz regardless
 (`kova_codec.SAMPLE_RATE`); `kova_codec.OUTPUT_SAMPLE_RATE` names the shipped decoder's rate.
 
+## 16 kHz input
+
+A dual-rate checkpoint carries a small trained 16 kHz stem in front of the shared encoder, and
+encodes 16 kHz audio natively onto the same 80 codes/second token space:
+
+```python
+codec = KovaCodec.from_checkpoint("semantic48-dualrate16.pt", device="cuda")
+codec.supported_input_sample_rates             # (16000, 32000)
+codes = codec.encode(wav_16k, input_sample_rate=16000)
+wav = codec.decode(codes)                      # 48 kHz, like any other codes
+```
+
+32 kHz input to a dual-rate checkpoint gives exactly the production codes. 16 kHz input gives
+close codes, not identical ones, so compare audio rather than token ids across rates. A
+checkpoint without the stem reports `(32000,)` and raises on `input_sample_rate=16000`;
+resample to 32 kHz for it instead.
+
 ## Streaming
 
 `decode_with_lstm` decodes one window of codes at a time and hands back the decoder's LSTM

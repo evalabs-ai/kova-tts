@@ -32,17 +32,19 @@ def lora_root(tmp_path):
 
 
 class FakeCodec:
-    """Encodes to one code per 400 samples, which is what the real codec's rate works out to."""
+    """Encodes to 80 codes a second at either input rate, which is what the real codec does."""
 
     device = torch.device("cpu")
     sample_rate = SAMPLE_RATE
 
     def __init__(self) -> None:
         self.seen: np.ndarray | None = None
+        self.rate: int | None = None
 
-    def encode(self, wav):
+    def encode(self, wav, input_sample_rate: int = SAMPLE_RATE):
+        self.rate = input_sample_rate
         self.seen = np.asarray(wav, dtype=np.float32)
-        return torch.arange(self.seen.size // 400, dtype=torch.long) % 8192
+        return torch.arange(self.seen.size // (input_sample_rate // 80), dtype=torch.long) % 8192
 
 
 class TestRegistry:
@@ -146,8 +148,45 @@ class TestFromAudio:
 
     def test_silence_encoding_to_nothing_is_reported(self):
         class Empty(FakeCodec):
-            def encode(self, wav):
+            def encode(self, wav, input_sample_rate=SAMPLE_RATE):
                 return torch.zeros(0, dtype=torch.long)
 
         with pytest.raises(ValueError, match="probably silent"):
             voices.from_audio(self.wav(), "Hello.", codec=Empty())
+
+
+class TestEncodeRate:
+    """A reference recorded at 16 kHz or below goes to the encoder at 16 kHz, natively."""
+
+    @staticmethod
+    def tone(seconds: float, rate: int) -> np.ndarray:
+        t = np.arange(int(seconds * rate)) / rate
+        return (0.4 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+
+    def write(self, tmp_path, rate: int):
+        from kova_tts import audio as audio_io
+
+        return audio_io.save_wav(tmp_path / f"ref_{rate}.wav", self.tone(3.0, rate), rate)
+
+    def test_a_16k_file_is_encoded_natively(self, tmp_path):
+        codec = FakeCodec()
+        voice = voices.from_audio(self.write(tmp_path, 16_000), "Hello there.", codec=codec)
+        assert codec.rate == 16_000
+        assert codec.seen.size == 3 * 16_000
+        assert voice.ref_seconds == pytest.approx(3.0)  # still 80 codes per second
+
+    def test_a_wideband_file_goes_in_at_32k(self, tmp_path):
+        codec = FakeCodec()
+        voices.from_audio(self.write(tmp_path, 44_100), "Hello there.", codec=codec)
+        assert codec.rate == SAMPLE_RATE
+
+    def test_a_waveform_is_taken_at_the_rate_it_is_said_to_be(self):
+        codec = FakeCodec()
+        voices.from_audio(self.tone(3.0, 16_000), "Hello.", codec=codec, sample_rate=16_000)
+        assert codec.rate == 16_000 and codec.seen.size == 3 * 16_000
+
+    def test_a_48k_waveform_is_brought_down_to_32k(self):
+        codec = FakeCodec()
+        voices.from_audio(self.tone(3.0, 48_000), "Hello.", codec=codec, sample_rate=48_000)
+        assert codec.rate == SAMPLE_RATE
+        assert codec.seen.size == pytest.approx(3 * SAMPLE_RATE, abs=2)
