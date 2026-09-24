@@ -64,33 +64,82 @@ footer { display: none !important; }
 #: which is why the JavaScript arrives through a load event instead.
 PLAYER_HTML = f"""
 <style>
-.kova-player {{ margin-top: 0.5rem; }}
-.kova-track {{
-  display: flex; align-items: center; gap: 0.75rem;
+/* Everything is scoped under #kova-player: an id outranks Gradio's own button, link and
+   .prose rules, which would otherwise repaint the controls grey and squash the icons. */
+#kova-player {{ margin-top: 0.5rem; }}
+#kova-player .kova-track {{ display: flex; align-items: center; gap: 0.75rem; }}
+#kova-player .kova-toggle, #kova-player .kova-download {{
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 2rem; height: 2rem; min-width: 0; margin: 0; padding: 0;
+  border: none; border-radius: 50%; box-shadow: none; filter: none; opacity: 1;
+  text-decoration: none; cursor: pointer; transition: background 120ms, opacity 120ms;
 }}
-.kova-bar {{
-  flex: 1; height: 6px; border-radius: 3px;
+#kova-player .kova-toggle {{ background: var(--color-accent, #3b82f6); }}
+#kova-player .kova-toggle:not(:disabled):hover {{ filter: brightness(1.1); }}
+#kova-player .kova-toggle:disabled {{ opacity: 0.35; cursor: default; }}
+#kova-player .kova-download {{ background: transparent; }}
+#kova-player .kova-download:hover {{ background: var(--neutral-100, #f3f4f6); }}
+#kova-player .kova-download[hidden] {{ display: none; }}
+#kova-player .kova-toggle svg, #kova-player .kova-download svg {{
+  flex: none; width: 1rem; height: 1rem;
+}}
+#kova-player .kova-toggle svg * {{ fill: #fff; }}
+#kova-player .kova-download svg * {{ fill: var(--color-accent, #3b82f6); }}
+#kova-player .kova-toggle .kova-icon-pause,
+#kova-player[data-playing] .kova-toggle .kova-icon-play {{ display: none; }}
+#kova-player[data-playing] .kova-toggle .kova-icon-pause {{ display: block; }}
+#kova-player .kova-seek {{ flex: 1; padding: 0.5rem 0; touch-action: none; outline: none; }}
+#kova-player[data-seekable] .kova-seek {{ cursor: pointer; }}
+#kova-player .kova-bar {{
+  height: 6px; border-radius: 3px;
   background: var(--neutral-200, #e5e7eb); overflow: hidden;
 }}
-.kova-fill {{
-  height: 100%; width: 0%; border-radius: 3px;
-  background: var(--color-accent, #f97316); transition: width 80ms linear;
+#kova-player[data-seekable] .kova-seek:hover .kova-bar,
+#kova-player .kova-seek:focus-visible .kova-bar {{
+  height: 8px; margin: -1px 0; border-radius: 4px;
 }}
-.kova-elapsed {{ font-variant-numeric: tabular-nums; font-size: 0.85rem; opacity: 0.75; }}
-.kova-clip-row {{ display: flex; align-items: center; gap: 0.75rem; margin-top: 0.75rem; }}
-.kova-clip-row audio {{ flex: 1; height: 40px; }}
-.kova-clip-row a {{ font-size: 0.85rem; white-space: nowrap; }}
-.kova-status {{ min-height: 1.6em; margin-top: 0.6rem; font-variant-numeric: tabular-nums; }}
+#kova-player .kova-seek:focus-visible .kova-bar {{
+  box-shadow: 0 0 0 2px var(--color-accent, #3b82f6);
+}}
+#kova-player .kova-fill {{
+  height: 100%; width: 0%; border-radius: inherit;
+  background: var(--color-accent, #3b82f6); transition: width 80ms linear;
+}}
+#kova-player[data-dragging] .kova-fill {{ transition: none; }}
+#kova-player .kova-elapsed {{
+  font-variant-numeric: tabular-nums; font-size: 0.85rem; opacity: 0.75;
+}}
+#kova-player .kova-status {{
+  min-height: 1.6em; margin-top: 0.6rem; font-variant-numeric: tabular-nums;
+}}
 </style>
-<div class="kova-player">
+<div class="kova-player" id="kova-player">
   <div class="kova-track">
-    <div class="kova-bar"><div class="kova-fill" id="kova-fill"></div></div>
+    <button class="kova-toggle" id="kova-toggle" type="button" aria-label="Play" disabled>
+      <svg class="kova-icon-play" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M4.5 2.8v10.4a.6.6 0 0 0 .9.5l8.3-5.2a.6.6 0 0 0 0-1L5.4 2.3a.6.6 0 0 0-.9.5z"/>
+      </svg>
+      <svg class="kova-icon-pause" viewBox="0 0 16 16" aria-hidden="true">
+        <rect x="3.5" y="2.5" width="3" height="11" rx="0.8"/>
+        <rect x="9.5" y="2.5" width="3" height="11" rx="0.8"/>
+      </svg>
+    </button>
+    <div class="kova-seek" id="kova-seek" role="slider" tabindex="0" aria-label="Seek"
+         aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+      <div class="kova-bar"><div class="kova-fill" id="kova-fill"></div></div>
+    </div>
     <span class="kova-elapsed" id="kova-elapsed">0:00 / 0:00</span>
+    <a class="kova-download" id="kova-download" href="#" download="kova-speech.wav"
+       title="Download .wav" aria-label="Download .wav" hidden>
+      <svg viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M8 1.5a.75.75 0 0 1 .75.75v6.69l2.22-2.22a.75.75 0 1 1 1.06 1.06l-3.5 3.5a.75.75
+          0 0 1-1.06 0l-3.5-3.5a.75.75 0 1 1 1.06-1.06l2.22 2.22V2.25A.75.75 0 0 1 8 1.5zM2.75
+          12.5a.75.75 0 0 0 0 1.5h10.5a.75.75 0 0 0 0-1.5H2.75z"/>
+      </svg>
+    </a>
   </div>
-  <div class="kova-clip-row" id="kova-clip-row" hidden>
-    <audio id="kova-clip" controls preload="metadata"></audio>
-    <a id="kova-download" href="#" download="kova-speech.wav" hidden>Download .wav</a>
-  </div>
+  <!-- The finished clip plays through this element; the transport above is its only face. -->
+  <audio id="kova-clip" preload="auto" hidden></audio>
   <p class="kova-status" id="kova-status">{READY}</p>
 </div>
 """

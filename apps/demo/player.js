@@ -37,6 +37,37 @@
     /** Longest text the demo accepts, mirrored from app.py only to fail fast in the browser. */
     const MAX_CHARS = window.KOVA_MAX_CHARS || 1200;
 
+    /**
+     * Length of speech the text will take, before generation has said otherwise:
+     *
+     *     seconds ~ 0.049 * characters + 0.70 * sentences + 0.31 * clause breaks - 0.15
+     *
+     * Fitted on the shipped model over 96 generations -- short replies to long paragraphs, the
+     * base voice and two LoRAs, two seeds each. The median error is 6%, which is the model's own
+     * seed-to-seed variation on identical text; the worst tenth are within 17%. Every pause is
+     * worth more than its one character, which is what the two punctuation terms are for.
+     */
+    const PACE = { perChar: 0.049, perSentence: 0.70, perClause: 0.31, offset: -0.15 };
+
+    /** Shortest length ever estimated: a word or two is still a second of audio with its pauses. */
+    const MIN_ESTIMATE_SEC = 1.0;
+
+    /**
+     * While generating, received audio past this fraction of the estimate means the estimate is
+     * too short, and it is raised to keep this much headroom. Close to 1 because the estimate is
+     * rarely far off: the total then overshoots by at most ~5% before settling on the real one.
+     */
+    const ESTIMATE_HEADROOM = 0.95;
+
+    /** How far a voice's learned correction may pull an estimate, either way. */
+    const CORRECTION_RANGE = [0.6, 1.6];
+
+    /** How quickly the displayed length glides to a new estimate: a time constant, in seconds. */
+    const ESTIMATE_GLIDE_SEC = 0.35;
+
+    /** Longest run of words from the text that goes into a download's filename. */
+    const FILENAME_WORDS = 5;
+
     // ------------------------------------------------------------------ decoding and packaging
 
     /** base64 -> Int16Array. The payload is little-endian, which is what a DataView-free view
@@ -111,6 +142,93 @@
         return new Blob([wavHeader(samples, sampleRate), pcm], { type: "audio/wav" });
     }
 
+    // --------------------------------------------------------------------- the length estimate
+
+    /** `PACE` applied to `text`: its estimated length in seconds, before any correction. */
+    function estimateSeconds(text) {
+        const sentences = (text.match(/[.!?]+(\s|$)/g) || []).length;
+        const clauses = (text.match(/[,;:\u2014\u2013-]\s/g) || []).length;
+        const seconds =
+            PACE.perChar * text.length +
+            PACE.perSentence * sentences +
+            PACE.perClause * clauses +
+            PACE.offset;
+        return Math.max(MIN_ESTIMATE_SEC, seconds);
+    }
+
+    /**
+     * Actual length over estimated length, learned per voice from the runs this page finished.
+     * The installed voices all sit within a few percent of `PACE`; a clone can be well off it,
+     * and its second generation should not repeat the first one's misjudgement.
+     */
+    const correctionByVoice = new Map();
+
+    /**
+     * The total length the transport shows: a guess from the text before any audio exists,
+     * corrected as audio arrives, and exact once generation ends.
+     *
+     * The received length alone makes a poor total -- it grows by a frame at a time, so the bar
+     * rescales every ~390 ms. Instead the target changes rarely (see ESTIMATE_HEADROOM) and the
+     * displayed value glides to it, so a correction is a smooth drift rather than a jump.
+     */
+    class LengthEstimate {
+        constructor() {
+            this.reset();
+        }
+
+        reset() {
+            this.target = 0;
+            this.shown = 0;
+            this.exact = true;
+            this.painted = null;
+        }
+
+        /** Guess from the text, before generation starts. */
+        begin(text, voice) {
+            const correction = correctionByVoice.get(voice || "") || 1;
+            this.target = Math.max(MIN_ESTIMATE_SEC, estimateSeconds(text) * correction);
+            this.shown = this.target;
+            this.exact = false;
+            this.painted = null;
+        }
+
+        /** Audio has arrived: raise the target only if it is about to be overtaken. */
+        received(seconds) {
+            if (this.exact) return;
+            if (seconds > this.target * ESTIMATE_HEADROOM) {
+                this.target = seconds / ESTIMATE_HEADROOM;
+            }
+        }
+
+        /** Generation is over and `seconds` is all there is; learn from it if it finished. */
+        settle(seconds, learn) {
+            this.target = seconds;
+            this.exact = true;
+            if (learn && learn.text && seconds > 0) {
+                const key = learn.voice || "";
+                const [low, high] = CORRECTION_RANGE;
+                const observed = Math.min(high, Math.max(low, seconds / estimateSeconds(learn.text)));
+                const previous = correctionByVoice.get(key);
+                correctionByVoice.set(key, previous ? (previous + observed) / 2 : observed);
+            }
+        }
+
+        /** The length to draw this frame, eased towards the target. */
+        value() {
+            const now = performance.now();
+            const dt = this.painted === null ? 0 : (now - this.painted) / 1000;
+            this.painted = now;
+            this.shown += (this.target - this.shown) * (1 - Math.exp(-dt / ESTIMATE_GLIDE_SEC));
+            if (Math.abs(this.target - this.shown) < 0.005) this.shown = this.target;
+            return this.shown;
+        }
+
+        /** Still gliding, so painting has to continue after playback has stopped. */
+        moving() {
+            return this.shown !== this.target;
+        }
+    }
+
     // ---------------------------------------------------------------------------- the player
 
     /**
@@ -129,6 +247,8 @@
             this.nextStartTime = 0;
             this.startedAt = null;
             this.sampleRate = CODEC_SAMPLE_RATE;
+            this.length = new LengthEstimate();
+            this.paused = false;
         }
 
         /** Open the context, asking for the codec's rate so nothing has to be resampled. */
@@ -205,6 +325,23 @@
             };
         }
 
+        /**
+         * Hold playback by suspending the context. The audio clock stops with it, so frames that
+         * keep arriving meanwhile still line up behind the ones already queued, and resuming
+         * carries on from the same sample.
+         */
+        pause() {
+            if (!this.context || this.paused) return;
+            this.paused = true;
+            this.context.suspend().catch(() => undefined);
+        }
+
+        resume() {
+            if (!this.context || !this.paused) return;
+            this.paused = false;
+            this.context.resume().catch(() => undefined);
+        }
+
         /** Stop everything still scheduled, keeping the audio received so far. */
         stopPlayback() {
             for (const source of this.sources) {
@@ -220,9 +357,11 @@
         /** Stop, forget, and put the cursor back on the clock: the state a new run starts in. */
         clearPlayback() {
             this.stopPlayback();
+            this.paused = false;
             this.chunks = [];
             this.startedAt = null;
             this.nextStartTime = this.context ? this.context.currentTime : 0;
+            this.length.reset();
         }
 
         /** Seconds of audio received so far. */
@@ -256,6 +395,23 @@
     /** The object URL of the finished clip, revoked when the next one replaces it. */
     let clipUrl = null;
 
+    /** The most recent run, kept past its end so a stopped clip can still be named. */
+    let lastRun = null;
+
+    /**
+     * Which audio the transport is showing and driving. It follows the stream while a run is
+     * being generated and heard, and moves to the finished clip -- a hidden <audio> element --
+     * as soon as the listener pauses-and-seeks, replays, or stops. From then on the same bar
+     * scrubs the clip, so there is only ever one player on the page.
+     */
+    let onClip = false;
+
+    /** A drag along the bar in progress, and whether to carry on playing when it ends. */
+    let dragging = null;
+
+    /** A paint already requested for the next frame, so the loop never runs twice over. */
+    let paintQueued = false;
+
     const element = (id) => document.getElementById(id);
 
     function setStatus(message) {
@@ -268,21 +424,102 @@
         return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
     }
 
-    /** Paint the transport: a filled bar for playback position within what has been received. */
-    function paint() {
-        const total = player.duration();
-        const position = player.position();
-        const fill = element("kova-fill");
-        const elapsed = element("kova-elapsed");
-        if (fill) fill.style.width = total > 0 ? `${(100 * position) / total}%` : "0%";
-        if (elapsed) elapsed.textContent = `${clock(position)} / ${clock(total)}`;
-        // Keep painting until the last scheduled frame has been heard, not until the last one
-        // has been received: generation finishes well before playback does.
-        if (active || player.sources.length > 0) window.requestAnimationFrame(paint);
+    /** The finished clip can be scrubbed once it exists and nothing is being generated. */
+    function seekable() {
+        return Boolean(clipUrl) && !active;
     }
 
-    /** Hand the finished audio to a plain <audio> element, for scrubbing and downloading. */
-    function publishClip() {
+    /** Whether the button should offer "pause": sound is coming out, or about to. */
+    function playing() {
+        if (dragging) return dragging.wasPlaying;
+        if (onClip) {
+            const clip = element("kova-clip");
+            return Boolean(clip && !clip.paused);
+        }
+        return !player.paused && (Boolean(active) || player.sources.length > 0);
+    }
+
+    function schedulePaint() {
+        if (paintQueued) return;
+        paintQueued = true;
+        window.requestAnimationFrame(() => {
+            paintQueued = false;
+            paint();
+        });
+    }
+
+    /** Paint the transport: playback position within the (estimated, then exact) total. */
+    function paint() {
+        const total = Math.max(player.length.value(), player.duration());
+        const clip = element("kova-clip");
+        const position = onClip && clip ? Math.min(total, clip.currentTime) : player.position();
+        const approximate = player.length.exact ? "" : "~";
+        const label = `${clock(position)} / ${approximate}${clock(total)}`;
+        const isPlaying = playing();
+
+        const fill = element("kova-fill");
+        const elapsed = element("kova-elapsed");
+        const root = element("kova-player");
+        const toggle = element("kova-toggle");
+        const seek = element("kova-seek");
+        if (fill) fill.style.width = total > 0 ? `${Math.min(100, (100 * position) / total)}%` : "0%";
+        if (elapsed) elapsed.textContent = label;
+        if (root) {
+            root.toggleAttribute("data-playing", isPlaying);
+            root.toggleAttribute("data-seekable", seekable());
+        }
+        if (toggle) {
+            toggle.disabled = !(active || player.sources.length > 0 || clipUrl);
+            toggle.setAttribute("aria-label", isPlaying ? "Pause" : "Play");
+        }
+        if (seek) {
+            seek.setAttribute("aria-valuemax", total.toFixed(1));
+            seek.setAttribute("aria-valuenow", position.toFixed(1));
+            seek.setAttribute("aria-valuetext", label);
+        }
+        // Keep painting until the last scheduled frame has been heard, not until the last one
+        // has been received: generation finishes well before playback does.
+        const clipPlaying = onClip && clip && !clip.paused;
+        if (active || player.sources.length > 0 || player.length.moving() || clipPlaying || dragging) {
+            schedulePaint();
+        }
+    }
+
+    /** Lowercase words joined by hyphens, safe in a filename on every platform. */
+    function slug(text, words) {
+        return text
+            .normalize("NFKD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, " ")
+            .trim()
+            .split(" ")
+            .filter(Boolean)
+            .slice(0, words)
+            .join("-");
+    }
+
+    /**
+     * What a downloaded clip is called: the voice, when it was generated, how it starts, and the
+     * seed that reproduces it -- `kova_erika_2026-09-24_14-05-32_the-kettle-clicked_seed42.wav`.
+     */
+    function clipFilename(run) {
+        const pad = (n) => String(n).padStart(2, "0");
+        const at = run.at;
+        const date = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
+        const time = `${pad(at.getHours())}-${pad(at.getMinutes())}-${pad(at.getSeconds())}`;
+        const parts = [
+            "kova",
+            slug(run.voice || "base", 4) || "voice",
+            `${date}_${time}`,
+            slug(run.text, FILENAME_WORDS),
+            `seed${run.seed}`,
+        ];
+        return `${parts.filter(Boolean).join("_")}.wav`;
+    }
+
+    /** Hand the finished audio to the hidden <audio> element, for replaying and downloading. */
+    function publishClip(run) {
         const clip = element("kova-clip");
         const download = element("kova-download");
         if (!clip || player.chunks.length === 0) return;
@@ -291,10 +528,70 @@
         clip.src = clipUrl;
         if (download) {
             download.href = clipUrl;
+            if (run) download.download = clipFilename(run);
             download.hidden = false;
         }
-        const wrapper = element("kova-clip-row");
-        if (wrapper) wrapper.hidden = false;
+        schedulePaint();
+    }
+
+    /** Take the previous clip off the transport, so a new run starts with nothing to replay. */
+    function retireClip() {
+        const clip = element("kova-clip");
+        if (clip) {
+            clip.pause();
+            clip.removeAttribute("src");
+            clip.load();
+        }
+        if (clipUrl) URL.revokeObjectURL(clipUrl);
+        clipUrl = null;
+        onClip = false;
+        const download = element("kova-download");
+        if (download) download.hidden = true;
+    }
+
+    /**
+     * Hand the transport from the stream to the finished clip, at the point the stream had
+     * reached -- or from the top, if it had already played to the end.
+     */
+    function moveToClip(clip, at) {
+        if (onClip) return;
+        player.stopPlayback();
+        onClip = true;
+        clip.currentTime = at >= player.duration() - 0.05 ? 0 : at;
+    }
+
+    /** The play/pause button. While streaming it holds the stream; after, it drives the clip. */
+    function toggle() {
+        const clip = element("kova-clip");
+        if (!onClip && (active || player.sources.length > 0)) {
+            if (player.paused) player.resume();
+            else player.pause();
+        } else if (clip && clipUrl) {
+            if (!clip.paused) {
+                clip.pause();
+            } else {
+                moveToClip(clip, player.position());
+                clip.play().catch(() => undefined);
+            }
+        }
+        schedulePaint();
+    }
+
+    /** Jump the clip to `seconds`, keeping it playing if it was. */
+    function seekTo(seconds) {
+        const clip = element("kova-clip");
+        if (!clip || !seekable()) return;
+        const wasPlaying = playing();
+        moveToClip(clip, player.position());
+        clip.currentTime = Math.min(player.duration(), Math.max(0, seconds));
+        if (wasPlaying && clip.paused) clip.play().catch(() => undefined);
+        schedulePaint();
+    }
+
+    function seekFraction(event, seek) {
+        const box = seek.getBoundingClientRect();
+        const fraction = box.width > 0 ? (event.clientX - box.left) / box.width : 0;
+        return Math.min(1, Math.max(0, fraction)) * player.duration();
     }
 
     /** Parse `data: {json}\n\n` events off a fetch body. Named events are ignored: the payload
@@ -370,15 +667,24 @@
         const seed = Number.isFinite(options.seed) && options.seed >= 0
             ? Math.floor(options.seed)
             : Math.floor(Math.random() * 2147483646);
-        active = { controller, seed, chunks: 0, firstAudio: null };
+        active = {
+            controller,
+            seed,
+            text,
+            voice: options.voice || "",
+            at: new Date(),
+            chunks: 0,
+            firstAudio: null,
+        };
+        lastRun = active;
 
         player.unlock();
         player.clearPlayback();
+        player.length.begin(text, active.voice);
 
-        const clipRow = element("kova-clip-row");
-        if (clipRow) clipRow.hidden = true;
+        retireClip();
         setStatus(modelLoaded ? "Generating..." : "Loading the model, which takes a few seconds...");
-        window.requestAnimationFrame(paint);
+        schedulePaint();
 
         const started = performance.now();
         try {
@@ -402,6 +708,7 @@
 
             if (!response.ok) {
                 setStatus(await describeFailure(response));
+                player.length.settle(0);
                 active = null;
                 return;
             }
@@ -414,6 +721,7 @@
                         modelLoaded = true;
                     }
                     player.enqueue(event.audio, event.sample_rate);
+                    player.length.received(player.duration());
                     active.chunks += 1;
                     setStatus(
                         `First audio in ${active.firstAudio.toFixed(2)} s · ` +
@@ -421,6 +729,7 @@
                     );
                 } else if (typeof event.message === "string") {
                     setStatus(`That failed: ${event.message}`);
+                    player.length.settle(player.duration());
                     active = null;
                     return;
                 } else if (typeof event.chunks === "number") {
@@ -431,24 +740,28 @@
             // The body ended without a terminal event: the connection dropped mid-generation.
             if (active) {
                 setStatus("The connection closed before the model had finished.");
-                publishClip();
+                player.length.settle(player.duration());
+                publishClip(active);
                 active = null;
             }
         } catch (error) {
             if (controller.signal.aborted) return;
             setStatus(`Generation failed: ${error && error.message ? error.message : error}`);
+            player.length.settle(player.duration());
             active = null;
         }
     }
 
-    /** The `done` event: report the run, and hand the audio to the plain player. */
+    /** The `done` event: report the run, and hand the finished clip to the transport. */
     function finish(event, started) {
         const run = active;
         active = null;
         if (!run) return;
         const elapsed = (performance.now() - started) / 1000;
         const spoken = event.duration_seconds || player.duration();
-        publishClip();
+        player.length.settle(player.duration(), { text: run.text, voice: run.voice });
+        schedulePaint();
+        publishClip(run);
         if (run.chunks === 0) {
             setStatus(
                 "The model produced no audio for that text. Try rephrasing it, or add some " +
@@ -470,27 +783,91 @@
     function stop(options) {
         const quiet = Boolean(options && options.quiet);
         const interrupted = Boolean(active);
+        const at = player.position();
         if (active) {
             active.controller.abort();
             active = null;
         }
         player.stopPlayback();
+        const clip = element("kova-clip");
+        if (clip) clip.pause();
         if (quiet) return;
         // Half a generation is still worth keeping; a finished one has already been published,
         // and re-publishing it would yank the clip out from under a listener who is scrubbing.
-        if (interrupted) publishClip();
+        if (interrupted) {
+            player.length.settle(player.duration());
+            publishClip(lastRun);
+        }
+        // The transport stays where it stopped, so play picks up from there.
+        if (clip && clipUrl) moveToClip(clip, at);
+        schedulePaint();
         setStatus("Stopped.");
     }
 
-    // The finished clip and the streaming player must never sound at once: pressing play on the
-    // <audio> element takes over from whatever is still scheduled.
-    document.addEventListener(
-        "play",
-        (event) => {
-            if (event.target && event.target.id === "kova-clip") stop({ quiet: true });
-        },
-        true,
-    );
+    // The transport is wired by delegation: Gradio owns the markup and may re-render it.
+    document.addEventListener("click", (event) => {
+        if (event.target.closest && event.target.closest("#kova-toggle")) toggle();
+    });
+
+    document.addEventListener("pointerdown", (event) => {
+        const seek = event.target.closest && event.target.closest("#kova-seek");
+        const clip = element("kova-clip");
+        if (!seek || !clip || !seekable() || event.button !== 0) return;
+        dragging = { wasPlaying: playing() };
+        moveToClip(clip, player.position());
+        clip.pause();
+        seek.setPointerCapture(event.pointerId);
+        const root = element("kova-player");
+        if (root) root.toggleAttribute("data-dragging", true);
+        clip.currentTime = seekFraction(event, seek);
+        schedulePaint();
+    });
+
+    document.addEventListener("pointermove", (event) => {
+        const seek = element("kova-seek");
+        const clip = element("kova-clip");
+        if (dragging && seek && clip) clip.currentTime = seekFraction(event, seek);
+    });
+
+    const endDrag = () => {
+        if (!dragging) return;
+        const clip = element("kova-clip");
+        if (dragging.wasPlaying && clip) clip.play().catch(() => undefined);
+        dragging = null;
+        const root = element("kova-player");
+        if (root) root.toggleAttribute("data-dragging", false);
+        schedulePaint();
+    };
+    document.addEventListener("pointerup", endDrag);
+    document.addEventListener("pointercancel", endDrag);
+
+    document.addEventListener("keydown", (event) => {
+        if (!event.target.closest || !event.target.closest("#kova-seek") || !seekable()) return;
+        const clip = element("kova-clip");
+        const now = onClip && clip ? clip.currentTime : player.position();
+        const jumps = { ArrowLeft: now - 5, ArrowRight: now + 5, Home: 0, End: player.duration() };
+        if (event.key in jumps) {
+            event.preventDefault();
+            seekTo(jumps[event.key]);
+        } else if (event.key === " " || event.key === "Enter") {
+            event.preventDefault();
+            toggle();
+        }
+    });
+
+    // The clip and the stream must never sound at once, whatever started the clip -- the button,
+    // or a media key reaching the hidden element directly.
+    for (const type of ["play", "pause", "ended", "seeked", "loadedmetadata"]) {
+        document.addEventListener(
+            type,
+            (event) => {
+                if (!event.target || event.target.id !== "kova-clip") return;
+                if (type === "play" && !onClip) moveToClip(event.target, player.position());
+                schedulePaint();
+            },
+            true,
+        );
+    }
 
     // Browsers keep an AudioContext suspended until a gesture. Speak is a gesture, but priming
     // on the first pointer event means the hardware is awake before the first frame arrives.
