@@ -15,6 +15,7 @@ from kova_tts.engine.decoder import (
     WINDOW,
     DecodeWindow,
     StreamingDecoder,
+    cudnn,
     decode_all,
     plan_window,
 )
@@ -319,6 +320,73 @@ def test_pushing_in_batches_gives_the_same_audio_as_one_at_a_time(codec, speech_
     in_batches = np.concatenate([c for c in chunks if c.size])
 
     np.testing.assert_array_equal(one_at_a_time, in_batches)
+
+
+@pytest.mark.gpu
+@pytest.mark.weights
+def test_the_captured_window_decodes_exactly_what_the_eager_one_does(
+    codec, speech_codes, monkeypatch
+):
+    """The steady window replays as a CUDA graph; the audio must not change by a sample.
+
+    Primed, so the replay starts from a carried LSTM state, and interleaved with a second
+    decoder on the same shared graph, which is what two sessions on one engine thread do.
+    """
+
+    def decode(codes, *, other=None) -> np.ndarray:
+        mine = StreamingDecoder(codec)
+        theirs = StreamingDecoder(codec)
+        mine.prime(codes[:80])
+        pieces = []
+        for index, code in enumerate(codes[80:]):
+            pieces.append(mine.push([code]))
+            if other is not None:
+                theirs.push([other[index % len(other)]])
+        pieces.append(mine.finish())
+        return np.concatenate([piece for piece in pieces if piece.size])
+
+    monkeypatch.setenv("KOVA_DISABLE_CUDA_GRAPH", "1")
+    eager = decode(speech_codes)
+    monkeypatch.setenv("KOVA_DISABLE_CUDA_GRAPH", "0")
+    captured = decode(speech_codes, other=list(reversed(speech_codes)))
+
+    assert captured.size == eager.size
+    np.testing.assert_array_equal(captured, eager)
+
+
+@pytest.mark.gpu
+@pytest.mark.weights
+def test_the_captured_window_works_on_a_gpu_that_is_not_the_current_one(
+    local_artifact, monkeypatch
+):
+    """Capture defaults to a stream on whichever device was current first; with two GPUs that
+    can be the wrong one, and the graph would record nothing and replay as silence."""
+    from kova_codec import KovaCodec
+
+    if torch.cuda.device_count() < 2:
+        pytest.skip("needs two CUDA devices")
+    other = torch.device("cuda", (torch.cuda.current_device() + 1) % torch.cuda.device_count())
+    codec = KovaCodec.from_checkpoint(
+        local_artifact("KOVA_CODEC_PATH"), device=other, decode_only=True
+    )
+    codes = torch.randint(0, 8192, (300,), generator=torch.Generator().manual_seed(3)).tolist()
+
+    def decode() -> np.ndarray:
+        decoder = StreamingDecoder(codec)
+        pieces = [decoder.push([code]) for code in codes] + [decoder.finish()]
+        return np.concatenate([piece for piece in pieces if piece.size])
+
+    monkeypatch.setenv("KOVA_DISABLE_CUDA_GRAPH", "1")
+    eager = decode()
+    monkeypatch.setenv("KOVA_DISABLE_CUDA_GRAPH", "0")
+    np.testing.assert_array_equal(decode(), eager)
+
+
+def test_cudnn_is_restored_after_a_decode_changes_it():
+    before = torch.backends.cudnn.enabled
+    with cudnn(enabled=not before):
+        assert torch.backends.cudnn.enabled is (not before)
+    assert torch.backends.cudnn.enabled is before
 
 
 @pytest.mark.gpu

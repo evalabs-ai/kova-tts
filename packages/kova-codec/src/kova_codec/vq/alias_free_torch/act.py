@@ -22,8 +22,10 @@ class Activation1d(nn.Module):
     time -- because the three stages are individually cheap but each one reads and writes a
     tensor twice the width of the layer it sits in. On Metal the whole sandwich is instead run
     as one fused kernel (:func:`~kova_codec.mps_kernels.fused_activation1d`), which touches the
-    tensor once; see :meth:`_fused_constants` for what it needs precomputed. Every other
-    backend takes the three-stage path below unchanged.
+    tensor once; see :meth:`_fused_constants` for what it needs precomputed. On CUDA and ROCm
+    the same fusion runs as two Triton kernels
+    (:func:`~kova_codec.triton_kernels.fused_activation1d`). The CPU takes the three-stage path
+    below unchanged.
     """
 
     def __init__(
@@ -44,6 +46,21 @@ class Activation1d(nn.Module):
         # None where it does not apply. `_fused_device` is what that answer was resolved for.
         self._fused: tuple[torch.Tensor, ...] | None = None
         self._fused_device: torch.device | None = None
+
+    def fusable(self) -> bool:
+        """True when this module has the exact geometry the fused kernels were derived for:
+        SnakeBeta between a 2x, 12-tap upsampler and a 2x, 12-tap replicate-padded decimator."""
+        from kova_codec.vq.activations import SnakeBeta
+
+        return (
+            isinstance(self.act, SnakeBeta)
+            and self.up_ratio == 2
+            and self.down_ratio == 2
+            and self.upsample.kernel_size == 12
+            and self.downsample.kernel_size == 12
+            and self.downsample.lowpass.padding
+            and self.downsample.lowpass.padding_mode == "replicate"
+        )
 
     def _fused_constants(self, device: torch.device) -> tuple[torch.Tensor, ...]:
         """The per-channel and per-tap constants the fused kernel reads, all float32 on `device`.
@@ -74,4 +91,9 @@ class Activation1d(nn.Module):
 
             if mps_kernels.available() and mps_kernels.activation1d_supported(self):
                 return mps_kernels.fused_activation1d(x, *self._fused_constants(x.device))
+        if x.device.type == "cuda" and x.dim() == 3:
+            from kova_codec import triton_kernels
+
+            if triton_kernels.enabled() and self.fusable():
+                return triton_kernels.fused_activation1d(x, *self._fused_constants(x.device))
         return self.downsample(self.act(self.upsample(x)))

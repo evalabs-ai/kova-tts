@@ -28,9 +28,12 @@ Two failure modes are baked into the window arithmetic here:
 
 from __future__ import annotations
 
+import contextlib
 import os
-from collections.abc import Iterable, Sequence
+import weakref
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import torch
@@ -264,17 +267,31 @@ class StreamingDecoder:
                 break
         return np.concatenate(pieces) if pieces else _empty()
 
+    @property
+    def steady_width(self) -> int:
+        """Codes in every window but a short utterance's only one and the last: one fixed shape."""
+        return self.window + 2 * self.lookahead + 2 * self.conv_padding
+
     def _decode_window(self, plan: DecodeWindow) -> np.ndarray:
         chunk = torch.tensor(
             self._codes[plan.start : plan.stop], dtype=torch.long, device=self.codec.device
         ).unsqueeze(0)
-        with torch.inference_mode():
-            audio, state = self.codec.decode_with_lstm(
-                chunk,
-                self._lstm_state,
-                return_lstm_state=plan.return_state_at,
-                conv_padding=self.conv_padding,
-            )
+        steady = plan.stop - plan.start == self.steady_width
+        graph = (
+            window_graph(self.codec, self.steady_width, self.conv_padding, plan.return_state_at)
+            if steady and not plan.is_last
+            else None
+        )
+        with torch.inference_mode(), cudnn(enabled=steady):
+            if graph is not None:
+                audio, state = graph(chunk, self._lstm_state)
+            else:
+                audio, state = self.codec.decode_with_lstm(
+                    chunk,
+                    self._lstm_state,
+                    return_lstm_state=plan.return_state_at,
+                    conv_padding=self.conv_padding,
+                )
         if not plan.is_last:
             self._lstm_state = state
         samples = audio[0, plan.emit_start : plan.emit_stop].float().cpu().numpy()
@@ -293,14 +310,133 @@ def decode_all(codec, codes: Sequence[int] | np.ndarray) -> np.ndarray:
     """Whole-utterance decode: every code at once, no windows, no LSTM bookkeeping.
 
     The right choice when the codes are already complete -- it is one kernel launch per layer
-    instead of one per window, and there are no seams at all.
+    instead of one per window, and there are no seams at all. Without cuDNN, because every
+    utterance is a new length: see :func:`cudnn`.
     """
     array = np.asarray(codes, dtype=np.int64)
     if array.size == 0:
         return _empty()
-    with torch.inference_mode():
+    with torch.inference_mode(), cudnn(enabled=False):
         audio = codec.decode(torch.from_numpy(array))
     return np.ascontiguousarray(audio.float().cpu().numpy(), dtype=np.float32)
+
+
+class WindowGraph:
+    """The steady streaming window, captured once as a CUDA graph and replayed for every window.
+
+    A window is ~1,000 small kernels -- most of the codec is short convolutions and pointwise
+    ops over a few dozen frames -- and launching them one by one from Python costs more than
+    running them. Every window but the first of a short utterance and the last has the same
+    shape and asks for the LSTM state at the same frame, so it is one graph, the way the LM's
+    decode step is.
+
+    The graph reads and writes fixed buffers. Codes and the incoming LSTM state are copied in
+    before a replay, and the outgoing state is copied out after it, so two decoders sharing the
+    graph -- two sessions whose turns interleave on the engine thread -- never see each other's
+    state. The audio buffer is only valid until the next replay; callers copy what they keep.
+    """
+
+    def __init__(self, codec: Any, *, width: int, conv_padding: int, state_at: int) -> None:
+        device = codec.device
+        self._codes = torch.zeros((1, width), dtype=torch.long, device=device)
+
+        def step() -> tuple[torch.Tensor, torch.Tensor]:
+            return codec.decode_with_lstm(
+                self._codes, self._state, return_lstm_state=state_at, conv_padding=conv_padding
+            )
+
+        # Everything on the codec's own device, and onto a capture stream made here: left to
+        # default, ``torch.cuda.graph`` captures on one process-wide stream built on whichever
+        # device was current the first time -- with two GPUs, possibly not this one, and the
+        # graph then records nothing (see ``Generator._capture``).
+        with torch.inference_mode(), cudnn(enabled=True), torch.cuda.device(device):
+            # A zero state is exactly what `None` means to the LSTM; the graph needs a buffer.
+            _, state = codec.decode_with_lstm(
+                self._codes, None, return_lstm_state=state_at, conv_padding=conv_padding
+            )
+            self._state = torch.zeros_like(state)
+            # Warm on a side stream, as capture requires: kernels compiled, cuDNN plans built,
+            # the upsamplers' filter phases cached -- nothing may allocate for the first time
+            # inside the capture.
+            side = torch.cuda.Stream(device)
+            side.wait_stream(torch.cuda.current_stream(device))
+            with torch.cuda.stream(side):
+                for _ in range(3):
+                    step()
+            torch.cuda.current_stream(device).wait_stream(side)
+            torch.cuda.synchronize(device)
+            self._graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(self._graph, stream=torch.cuda.Stream(device)):
+                self._audio, self._state_out = step()
+            # An empty capture replays as a silent no-op rather than failing; prove this one
+            # writes its output before any window trusts it.
+            self._audio.zero_()
+            self._graph.replay()
+            if not bool(self._audio.abs().sum() > 0):
+                raise RuntimeError("The codec window graph captured no work; decode eagerly.")
+
+    def __call__(
+        self, codes: torch.Tensor, state: torch.Tensor | None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """``codec.decode_with_lstm`` for one steady window: ``(audio, state)``."""
+        self._codes.copy_(codes)
+        if state is None:
+            self._state.zero_()
+        else:
+            self._state.copy_(state)
+        self._graph.replay()
+        return self._audio, self._state_out.clone()
+
+
+#: Captured windows per codec. Capturing costs a few eager decodes and some device memory, so
+#: every decoder on one codec shares them; weak, so a codec that goes away takes its graphs.
+_window_graphs: weakref.WeakKeyDictionary[Any, dict[tuple[int, int, int], WindowGraph]] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def window_graph(codec: Any, width: int, conv_padding: int, state_at: int) -> WindowGraph | None:
+    """The captured graph for this window shape, capturing it on first use -- or ``None``.
+
+    ``None`` off CUDA, with ``KOVA_DISABLE_CUDA_GRAPH`` set (the same switch as the LM's), or
+    for anything that is not a real codec, such as the stand-ins the tests decode with.
+    """
+    from kova_tts.engine.generator import ENV_DISABLE_CUDA_GRAPH
+
+    device = getattr(codec, "device", None)
+    if getattr(device, "type", None) != "cuda" or not isinstance(codec, torch.nn.Module):
+        return None
+    if os.environ.get(ENV_DISABLE_CUDA_GRAPH, "").strip() not in ("", "0"):
+        return None
+    graphs = _window_graphs.setdefault(codec, {})
+    key = (width, conv_padding, state_at)
+    if key not in graphs:
+        graphs[key] = WindowGraph(codec, width=width, conv_padding=conv_padding, state_at=state_at)
+    return graphs[key]
+
+
+@contextlib.contextmanager
+def cudnn(*, enabled: bool) -> Iterator[None]:
+    """Run the codec with cuDNN on or off, for this block only.
+
+    cuDNN builds an execution plan for every convolution shape it has not seen before, and the
+    codec has dozens of them: a decode at a new length spends about 1.2 s planning before it
+    computes anything. The steady streaming window is one shape, planned once and reused for
+    every window after -- and there cuDNN's kernels are twice as fast as torch's own (~25 ms
+    against ~50 ms a window). Everything else is a new length almost every time: the last
+    window of an utterance, and a whole-utterance decode. There torch's kernels, which need no
+    plan, are ~7x faster overall (0.17 s against 1.2 s for ten seconds of audio).
+
+    Global rather than per call, as ``torch.backends.cudnn`` is. That is safe because the model
+    only ever decodes from one thread at a time (see :func:`kova_tts.server.engine.engine_thread`).
+    A no-op off CUDA.
+    """
+    before = torch.backends.cudnn.enabled
+    torch.backends.cudnn.enabled = enabled
+    try:
+        yield
+    finally:
+        torch.backends.cudnn.enabled = before
 
 
 def load_codec(

@@ -238,3 +238,61 @@ def test_polyphase_declines_geometry_it_was_not_derived_for():
     assert not ConvTranspose1d(4, 4, kernel_size=4, stride=2, groups=2)._polyphase_ok()
     # kernel_size != 2 * stride: taps no longer land two-to-a-phase.
     assert not ConvTranspose1d(4, 4, kernel_size=6, stride=2, padding=1)._polyphase_ok()
+
+
+# ------------------------------------------------------------------ the fused Triton activation
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("channels,length", [(1, 1), (3, 2), (8, 7), (768, 49), (24, 29400)])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
+def test_the_triton_activation_matches_the_torch_path(
+    monkeypatch, cuda_device, channels, length, dtype
+):
+    """Same result as the three-stage path, at every length the decoder produces and at the
+    edges, where the replicate padding is easiest to get wrong. Float32 is exact up to summation
+    order; float16 differs only by the torch path rounding between stages, which the fused
+    kernel does not."""
+    from kova_codec import triton_kernels
+    from kova_codec.vq.activations import SnakeBeta
+    from kova_codec.vq.alias_free_torch import Activation1d
+
+    if not triton_kernels.available():
+        pytest.skip("Triton is not available")
+    torch.manual_seed(channels * 1000 + length)
+    act = Activation1d(activation=SnakeBeta(channels, alpha_logscale=True))
+    with torch.no_grad():
+        act.act.alpha.normal_(0, 0.5)
+        act.act.beta.normal_(0, 0.5)
+    act = act.to(device=cuda_device, dtype=dtype).eval()
+    x = (torch.randn(1, channels, length, device=cuda_device) * 2).to(dtype)
+
+    with torch.inference_mode():
+        monkeypatch.setenv(triton_kernels.ENV_TRITON, "0")
+        expected = act(x).float()
+        monkeypatch.setenv(triton_kernels.ENV_TRITON, "1")
+        fused = act(x).float()
+
+    tolerance = 1e-5 if dtype == torch.float32 else 5e-3 * max(1.0, float(expected.abs().max()))
+    torch.testing.assert_close(fused, expected, rtol=0, atol=tolerance)
+
+
+@pytest.mark.gpu
+def test_the_triton_activation_runs_on_a_gpu_that_is_not_the_current_one(monkeypatch):
+    """Triton compiles for torch's current device; the codec's may be another GPU, of another
+    architecture, where a kernel built for the current one will not even load."""
+    from kova_codec import triton_kernels
+    from kova_codec.vq.activations import SnakeBeta
+    from kova_codec.vq.alias_free_torch import Activation1d
+
+    if not triton_kernels.available() or torch.cuda.device_count() < 2:
+        pytest.skip("needs Triton and two CUDA devices")
+    other = torch.device("cuda", (torch.cuda.current_device() + 1) % torch.cuda.device_count())
+    act = Activation1d(activation=SnakeBeta(64, alpha_logscale=True)).to(other).eval()
+    x = torch.randn(1, 64, 500, device=other)
+    with torch.inference_mode():
+        monkeypatch.setenv(triton_kernels.ENV_TRITON, "0")
+        expected = act(x)
+        monkeypatch.setenv(triton_kernels.ENV_TRITON, "1")
+        fused = act(x)
+    torch.testing.assert_close(fused, expected, rtol=0, atol=1e-5)

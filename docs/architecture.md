@@ -416,6 +416,27 @@ Weight norm is a training-time reparameterisation and is folded once at load. Co
 are treated as padding — their embeddings are zeroed, which is exactly what a whole-utterance
 decode sees beyond the ends of the sequence, and is what makes the streaming windows line up.
 
+### Decode speed on CUDA
+
+Three things keep the codec a small share of generation time on a GPU. Measured on an RTX 3090,
+they take a steady streaming window from 23 ms to 5 ms, and streaming decode from ~200 ms to
+~18 ms per second of audio.
+
+- **cuDNN only where its plans are reused.** cuDNN builds an execution plan for every
+  convolution shape it has not seen, about 1.2 s for the codec's dozens of shapes. The steady
+  window is one shape, planned once; the last window and a whole-utterance decode are a new
+  length almost every time, so they run on torch's own kernels instead
+  (`kova_tts.engine.decoder.cudnn`). That plan cache is also per thread, which is why all model
+  work runs on one long-lived engine thread (`kova_tts.server.engine.engine_thread`).
+- **The steady window is a CUDA graph**, captured once per codec during warm-up and replayed
+  for every window, the way the LM's decode step is (`kova_tts.engine.decoder.WindowGraph`).
+  It is bit-identical to the eager decode. `KOVA_DISABLE_CUDA_GRAPH=1` turns off both graphs.
+- **The anti-aliased activation is fused in Triton** (`kova_codec.triton_kernels`): upsample,
+  SnakeBeta and downsample in two kernels instead of about eight, the counterpart of the Metal
+  kernel on Apple Silicon. Triton compiles for whatever GPU it runs on. The result matches the
+  torch path to 1e-6 in float32, and float16 decode fidelity is unchanged.
+  `KOVA_CODEC_TRITON=0` forces the torch path.
+
 ## Deliberate non-features
 
 Each of these is a decision. None of them is a bug.

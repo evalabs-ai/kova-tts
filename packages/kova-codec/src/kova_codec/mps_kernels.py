@@ -36,11 +36,6 @@ if TYPE_CHECKING:
 _NARROW = ("64", 64, 1)
 _WIDE = ("128", 128, 4)
 
-#: The fused activation kernel is derived for this exact resampler geometry (see the module
-#: docstring of ``alias_free_torch.resample``). Anything else falls back to torch.
-_RATIO = 2
-_KERNEL_SIZE = 12
-
 _ACTIVATION_SHADER = """
 #include <metal_stdlib>
 using namespace metal;
@@ -154,17 +149,7 @@ def available() -> bool:
 
 def activation1d_supported(module: Activation1d) -> bool:
     """True when `module` has the exact geometry :func:`fused_activation1d` was derived for."""
-    from kova_codec.vq.activations import SnakeBeta
-
-    return (
-        isinstance(module.act, SnakeBeta)
-        and module.up_ratio == _RATIO
-        and module.down_ratio == _RATIO
-        and module.upsample.kernel_size == _KERNEL_SIZE
-        and module.downsample.kernel_size == _KERNEL_SIZE
-        and module.downsample.lowpass.padding
-        and module.downsample.lowpass.padding_mode == "replicate"
-    )
+    return module.fusable()
 
 
 def fused_activation1d(
