@@ -22,7 +22,8 @@ BUSY = (
 
 #: Prompts written for this demo, each showing something: a held pause, a change of register,
 #: digits and units read aloud, and a long passage whose later sentences are still being
-#: generated while the first are playing. The Random button deals them out.
+#: generated while the first are playing -- then everyday lines, the kind anyone might say. The
+#: Random button deals them out.
 EXAMPLES = [
     "The kettle clicked off, and for a moment the whole kitchen was completely quiet.",
     "Wait. You're telling me the entire thing runs on one graphics card? That cannot be right.",
@@ -33,6 +34,16 @@ EXAMPLES = [
     "Here is the part I find strange. It does not plan the sentence before it starts talking. "
     "It writes the sound one fragment at a time, left to right, and somehow the pauses still "
     "land where a person would put them, and the question at the end still rises.",
+    "Hey, are you still up for lunch tomorrow, or should we move it to Friday?",
+    "I just realised I've been wearing my jumper inside out all morning.",
+    "Honestly, that was the best pizza I've had in ages.",
+    "Can you grab some milk on your way home? We're completely out.",
+    "No rush at all, just let me know whenever you get a chance.",
+    "I was going to go for a run, but then it started raining, so here we are.",
+    "Did you see the game last night? I can't believe how that ended!",
+    "Sorry I'm late, the traffic was absolutely ridiculous.",
+    "We should really plan a trip somewhere warm this winter.",
+    "Okay, I'm heading out now. Text me if you need anything.",
 ]
 
 CLONE_INTRO = (
