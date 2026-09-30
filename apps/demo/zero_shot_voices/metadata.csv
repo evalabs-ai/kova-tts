@@ -1,51 +1,51 @@
-file_name,text,seconds,utmos,dnsmos_ovr,nearest_selected_sim,source_clip,seed
-voice_01.flac,"The train station smelled like coffee and rain, and everyone seemed to be in a hurry to get somewhere.",6.987,4.609,3.626,0.3881,s111_t1,112235
-voice_02.flac,"It takes patience to learn a new language, especially when every word seems to have three different meanings.",6.888,3.881,3.496,0.3674,s034_t2,35236
-voice_03.flac,"Nobody warned me that the spicy sauce was actually spicy, and now I cannot feel my tongue.",7.062,3.775,3.501,0.3403,s170_t2,171236
-voice_04.flac,"We got completely lost on the way to the wedding, but somehow we still arrived before the bride.",6.237,4.051,3.555,0.3495,s060_t2,61236
-voice_05.flac,"There was a moment during the storm when everything went completely still, and then the thunder came.",7.35,3.604,3.329,0.3752,s101_t3,102237
-voice_06.flac,I am calling to confirm your appointment for tomorrow afternoon. Please let us know if you need to reschedule.,7.812,3.875,3.584,0.3536,s040_t2,41236
-voice_07.flac,"Our neighbors throw a big barbecue every summer, and somehow they always manage to invite the whole street.",7.088,4.012,3.554,0.3452,s037_t3,38237
-voice_08.flac,"The old lighthouse has not been used for decades, yet on some nights people swear they can still see it glowing.",8.662,3.725,3.385,0.349,s032_t0,33234
-voice_09.flac,"The hotel room had a balcony overlooking the sea, and we spent every evening out there listening to the waves.",8.575,3.645,3.58,0.3756,s090_t0,91234
-voice_10.flac,"Thank you so much for calling back. I know it has been a busy week, and I really appreciate you making the time.",9.875,3.633,3.493,0.354,s007_t0,8234
-voice_11.flac,"I always leave a light on in the kitchen when I travel, so the house does not feel so empty when I return.",7.7,3.557,3.596,0.3667,s196_t2,197236
-voice_12.flac,"The fisherman untangled his net with slow, careful hands, humming a tune that nobody else seemed to know.",7.562,3.98,3.486,0.3639,s118_t0,119234
-voice_13.flac,"The river swelled after the spring rains, and the old stone bridge disappeared beneath the water.",6.662,3.572,3.471,0.3155,s199_t2,200236
-voice_14.flac,"If you ever find yourself in that part of the country, you really have to try the local cheese.",6.675,3.625,3.658,0.342,s077_t2,78236
-voice_15.flac,"The jazz band played until well after midnight, and nobody in the crowd seemed ready to go home.",7.037,3.783,3.595,0.3929,s134_t3,135237
-voice_16.flac,"The old wooden floor creaked with every step, and the whole house seemed to sigh as we walked inside.",7.425,3.553,3.489,0.3075,s115_t1,116235
-voice_17.flac,"I think the problem is not the plan itself, but the fact that nobody has enough time to follow it.",5.775,3.502,3.466,0.341,s133_t2,134236
-voice_18.flac,The guide pointed at the cliff and told us that eagles had nested there for as long as anyone could remember.,7.05,3.596,3.496,0.356,s142_t3,143237
-voice_19.flac,"The meadow was full of wildflowers, and the air smelled like honey and warm grass.",5.85,3.992,3.45,0.3353,s120_t4,121238
-voice_20.flac,"The hot air balloon rose slowly above the fields, and the people below grew smaller and smaller.",6.15,3.68,3.559,0.3802,s163_t2,164236
-voice_21.flac,"The volunteers worked all weekend to clean up the park, and on Monday it looked brand new.",6.138,3.584,3.519,0.3565,s169_t4,170238
-voice_22.flac,"Before you sign anything, take a moment to read the whole agreement, especially the part about cancellation.",7.062,3.992,3.515,0.3579,s010_t0,11234
-voice_23.flac,"We should probably leave soon if we want to beat the traffic, but I really want to see how this game ends.",7.537,3.574,3.604,0.3529,s024_t4,25238
-voice_24.flac,"The recipe calls for fresh basil, but if you only have dried herbs, use a smaller amount and add it earlier.",7.237,3.691,3.411,0.3801,s043_t4,44238
-voice_25.flac,He laughed so hard at the joke that he had to put his coffee down and lean against the counter to catch his breath.,6.275,3.756,3.434,0.3565,s011_t0,12234
-voice_26.flac,"Every village along the coast has its own festival, and each one claims to have the best seafood.",6.463,3.803,3.69,0.3075,s104_t2,105236
-voice_27.flac,"The chef tasted the soup, added a pinch of salt, tasted it again, and finally nodded with approval.",7.75,3.844,3.59,0.3776,s153_t4,154238
-voice_28.flac,"I will be honest with you, I have no idea how this machine works, but I am willing to press buttons.",8.8,3.559,3.586,0.3476,s126_t3,127237
-voice_29.flac,"The bakery on the corner opens at dawn, and by seven there is already a line down the block.",7.45,3.826,3.608,0.3914,s165_t0,166234
-voice_30.flac,"The café ran out of croissants before nine, which caused a surprising amount of drama among the regulars.",7.338,4.047,3.622,0.3305,s088_t4,89238
-voice_31.flac,"Let me know when you get home safely, and do not forget to text me the name of that book you mentioned.",6.088,3.582,3.427,0.3998,s033_t3,34237
-voice_32.flac,The mechanic listened to the engine for a few seconds and said he knew exactly what was wrong.,7.013,3.727,3.475,0.3401,s157_t1,158235
-voice_33.flac,"The river was calm that evening, and the only sound was the soft splash of a paddle somewhere in the distance.",8.075,3.75,3.609,0.3403,s018_t3,19237
-voice_34.flac,"I have read that book at least five times, and I still find something new in it every time.",6.9,3.859,3.542,0.3783,s162_t0,163234
-voice_35.flac,"My roommate insists on singing in the shower every morning, and honestly, he is getting better.",6.15,4.277,3.36,0.3516,s168_t4,169238
-voice_36.flac,The engineer explained the design with such enthusiasm that even the investors started to get excited.,6.45,3.977,3.47,0.3964,s174_t3,175237
-voice_37.flac,"Please double check the address before you send the package, because the last one came back to us.",6.675,3.746,3.63,0.3862,s179_t4,180238
-voice_38.flac,"I hate to bother you again, but the package still has not arrived, and the tracking page has not changed.",8.075,4.012,3.644,0.356,s143_t0,144234
-voice_39.flac,"We found a tiny bookstore hidden down an alley, with shelves that reached all the way to the ceiling.",6.638,4.008,3.546,0.3795,s135_t4,136238
-voice_40.flac,Thank you for being so understanding. We will make sure this does not happen again.,5.338,3.934,3.411,0.3603,s191_t4,192238
-voice_41.flac,"If the printer jams again, just turn it off, wait a few seconds, and gently pull the paper straight out.",8.262,3.854,3.475,0.3667,s091_t1,92235
-voice_42.flac,I appreciate your patience while we look into this. It should only take a few more minutes.,5.763,3.889,3.461,0.3711,s110_t4,111238
-voice_43.flac,"She hummed quietly while she worked, and after a while the whole office was humming along without realizing it.",7.662,3.768,3.518,0.3756,s138_t0,139234
-voice_44.flac,The library has a quiet room on the top floor where you can hear nothing but the pages turning.,6.612,3.537,3.458,0.3757,s151_t1,152235
-voice_45.flac,You would not believe how many people showed up for the town meeting about the new parking rules.,5.287,3.732,3.532,0.3783,s121_t0,122234
-voice_46.flac,"You do not have to decide right now. Take the weekend, think it over, and let me know what feels right.",7.188,3.986,3.498,0.3801,s067_t1,68235
-voice_47.flac,"There is a trail behind the school that leads to a small waterfall, but hardly anyone knows about it.",5.85,3.979,3.436,0.3862,s181_t4,182238
-voice_48.flac,"We should write down the address somewhere, because I do not trust my phone to have signal out there.",6.138,4.02,3.586,0.3881,s098_t1,99235
-voice_49.flac,"The ship's horn sounded across the harbor, and the seagulls scattered into the gray morning sky.",7.075,3.51,3.655,0.3929,s171_t4,172238
-voice_50.flac,"The orchestra warmed up with a messy blend of notes, and then suddenly everything came together.",5.975,4.027,3.648,0.3998,s095_t2,96236
+file_name,text,seconds,utmos,dnsmos_ovr,nearest_selected_sim,source_clip,seed,gender,tags,rating
+voice_01.flac,"It takes patience to learn a new language, especially when every word seems to have three different meanings.",6.888,3.881,3.496,0.3674,s034_t2,35236,male,British;crisp;documentary,10
+voice_02.flac,"We got completely lost on the way to the wedding, but somehow we still arrived before the bride.",6.237,4.051,3.555,0.3495,s060_t2,61236,female,bright;storyteller;young adult,10
+voice_03.flac,"There was a moment during the storm when everything went completely still, and then the thunder came.",7.35,3.604,3.329,0.3752,s101_t3,102237,male,resonant;storyteller;fiction narration,10
+voice_04.flac,"Our neighbors throw a big barbecue every summer, and somehow they always manage to invite the whole street.",7.088,4.012,3.554,0.3452,s037_t3,38237,male,gravelly;resonant;storyteller,10
+voice_05.flac,"The hotel room had a balcony overlooking the sea, and we spent every evening out there listening to the waves.",8.575,3.645,3.58,0.3756,s090_t0,91234,female,British;breathy;crisp;soothing,10
+voice_06.flac,"I always leave a light on in the kitchen when I travel, so the house does not feel so empty when I return.",7.7,3.557,3.596,0.3667,s196_t2,197236,male,gravelly;soft;even,10
+voice_07.flac,"The fisherman untangled his net with slow, careful hands, humming a tune that nobody else seemed to know.",7.562,3.98,3.486,0.3639,s118_t0,119234,male,smooth;soothing;high pitch,10
+voice_08.flac,"The jazz band played until well after midnight, and nobody in the crowd seemed ready to go home.",7.037,3.783,3.595,0.3929,s134_t3,135237,female,husky;soft;middle-aged,10
+voice_09.flac,"The old wooden floor creaked with every step, and the whole house seemed to sigh as we walked inside.",7.425,3.553,3.489,0.3075,s115_t1,116235,male,British;gravelly;crisp;storyteller,10
+voice_10.flac,"I think the problem is not the plan itself, but the fact that nobody has enough time to follow it.",5.775,3.502,3.466,0.341,s133_t2,134236,male,husky;soft;deadpan,10
+voice_11.flac,The guide pointed at the cliff and told us that eagles had nested there for as long as anyone could remember.,7.05,3.596,3.496,0.356,s142_t3,143237,female,crisp;soothing;young adult;high pitch,10
+voice_12.flac,"Before you sign anything, take a moment to read the whole agreement, especially the part about cancellation.",7.062,3.992,3.515,0.3579,s010_t0,11234,female,breathy;soft;young adult,10
+voice_13.flac,"The recipe calls for fresh basil, but if you only have dried herbs, use a smaller amount and add it earlier.",7.237,3.691,3.411,0.3801,s043_t4,44238,female,breathy;soft;conversational;e-learning,10
+voice_14.flac,He laughed so hard at the joke that he had to put his coffee down and lean against the counter to catch his breath.,6.275,3.756,3.434,0.3565,s011_t0,12234,female,crisp;storyteller;documentary;middle-aged,10
+voice_15.flac,"Every village along the coast has its own festival, and each one claims to have the best seafood.",6.463,3.803,3.69,0.3075,s104_t2,105236,male,British;gravelly;resonant;storyteller,10
+voice_16.flac,"The bakery on the corner opens at dawn, and by seven there is already a line down the block.",7.45,3.826,3.608,0.3914,s165_t0,166234,male,gravelly;resonant;storyteller;documentary,10
+voice_17.flac,"The café ran out of croissants before nine, which caused a surprising amount of drama among the regulars.",7.338,4.047,3.622,0.3305,s088_t4,89238,male,British;gravelly;crisp;storyteller,10
+voice_18.flac,"The river was calm that evening, and the only sound was the soft splash of a paddle somewhere in the distance.",8.075,3.75,3.609,0.3403,s018_t3,19237,male,gravelly;soft;soothing;documentary,10
+voice_19.flac,"I hate to bother you again, but the package still has not arrived, and the tracking page has not changed.",8.075,4.012,3.644,0.356,s143_t0,144234,female,breathy;soft;soothing;customer service,10
+voice_20.flac,"We found a tiny bookstore hidden down an alley, with shelves that reached all the way to the ceiling.",6.638,4.008,3.546,0.3795,s135_t4,136238,female,British;crisp;soothing;fiction narration,10
+voice_21.flac,The library has a quiet room on the top floor where you can hear nothing but the pages turning.,6.612,3.537,3.458,0.3757,s151_t1,152235,male,crisp;soothing;documentary;young adult,10
+voice_22.flac,"We should write down the address somewhere, because I do not trust my phone to have signal out there.",6.138,4.02,3.586,0.3881,s098_t1,99235,female,crisp;conversational;customer service;young adult,10
+voice_23.flac,"The ship's horn sounded across the harbor, and the seagulls scattered into the gray morning sky.",7.075,3.51,3.655,0.3929,s171_t4,172238,female,husky;resonant;soothing;documentary,10
+voice_24.flac,"The orchestra warmed up with a messy blend of notes, and then suddenly everything came together.",5.975,4.027,3.648,0.3998,s095_t2,96236,male,crisp;storyteller;documentary;middle-aged,10
+voice_25.flac,"The river swelled after the spring rains, and the old stone bridge disappeared beneath the water.",6.662,3.572,3.471,0.3155,s199_t2,200236,female,British;crisp;young adult,9
+voice_26.flac,"If you ever find yourself in that part of the country, you really have to try the local cheese.",6.675,3.625,3.658,0.342,s077_t2,78236,male,breathy;soft;conversational,9
+voice_27.flac,"The volunteers worked all weekend to clean up the park, and on Monday it looked brand new.",6.138,3.584,3.519,0.3565,s169_t4,170238,female,British;crisp;even,9
+voice_28.flac,"The chef tasted the soup, added a pinch of salt, tasted it again, and finally nodded with approval.",7.75,3.844,3.59,0.3776,s153_t4,154238,female,British;breathy;crisp;storyteller,9
+voice_29.flac,"I will be honest with you, I have no idea how this machine works, but I am willing to press buttons.",8.8,3.559,3.586,0.3476,s126_t3,127237,male,breathy;soft;deadpan;characters,9
+voice_30.flac,"Let me know when you get home safely, and do not forget to text me the name of that book you mentioned.",6.088,3.582,3.427,0.3998,s033_t3,34237,male,resonant;soothing;podcast;brisk,9
+voice_31.flac,The mechanic listened to the engine for a few seconds and said he knew exactly what was wrong.,7.013,3.727,3.475,0.3401,s157_t1,158235,male,gravelly;resonant;deadpan;fiction narration,9
+voice_32.flac,"I have read that book at least five times, and I still find something new in it every time.",6.9,3.859,3.542,0.3783,s162_t0,163234,male,crisp;professional;documentary;high pitch,9
+voice_33.flac,"My roommate insists on singing in the shower every morning, and honestly, he is getting better.",6.15,4.277,3.36,0.3516,s168_t4,169238,male,bright;conversational;podcast;young adult,9
+voice_34.flac,The engineer explained the design with such enthusiasm that even the investors started to get excited.,6.45,3.977,3.47,0.3964,s174_t3,175237,male,crisp;storyteller;documentary;slow,9
+voice_35.flac,"If the printer jams again, just turn it off, wait a few seconds, and gently pull the paper straight out.",8.262,3.854,3.475,0.3667,s091_t1,92235,male,gravelly;resonant;conversational;customer service,9
+voice_36.flac,"She hummed quietly while she worked, and after a while the whole office was humming along without realizing it.",7.662,3.768,3.518,0.3756,s138_t0,139234,female,smooth;soothing;meditation;high pitch,9
+voice_37.flac,You would not believe how many people showed up for the town meeting about the new parking rules.,5.287,3.732,3.532,0.3783,s121_t0,122234,male,crisp;conversational;e-learning;low pitch,9
+voice_38.flac,"You do not have to decide right now. Take the weekend, think it over, and let me know what feels right.",7.188,3.986,3.498,0.3801,s067_t1,68235,female,soft;soothing;customer service;young adult,9
+voice_39.flac,"There is a trail behind the school that leads to a small waterfall, but hardly anyone knows about it.",5.85,3.979,3.436,0.3862,s181_t4,182238,female,soft;storyteller;fiction narration;young adult,9
+voice_40.flac,"The old lighthouse has not been used for decades, yet on some nights people swear they can still see it glowing.",8.662,3.725,3.385,0.349,s032_t0,33234,male,gravelly;soft;young adult,8
+voice_41.flac,"The hot air balloon rose slowly above the fields, and the people below grew smaller and smaller.",6.15,3.68,3.559,0.3802,s163_t2,164236,female,soft;soothing;middle-aged,8
+voice_42.flac,"Please double check the address before you send the package, because the last one came back to us.",6.675,3.746,3.63,0.3862,s179_t4,180238,female,crisp;professional;customer service;low pitch,8
+voice_43.flac,I appreciate your patience while we look into this. It should only take a few more minutes.,5.763,3.889,3.461,0.3711,s110_t4,111238,male,husky;resonant;soothing;customer service,8
+voice_44.flac,"The train station smelled like coffee and rain, and everyone seemed to be in a hurry to get somewhere.",6.987,4.609,3.626,0.3881,s111_t1,112235,female,crisp;soothing;fiction narration,7
+voice_45.flac,"Nobody warned me that the spicy sauce was actually spicy, and now I cannot feel my tongue.",7.062,3.775,3.501,0.3403,s170_t2,171236,male,smooth;deadpan;low pitch,5
+voice_46.flac,"Thank you so much for calling back. I know it has been a busy week, and I really appreciate you making the time.",9.875,3.633,3.493,0.354,s007_t0,8234,female,breathy;soft;soothing;even,5
+voice_47.flac,I am calling to confirm your appointment for tomorrow afternoon. Please let us know if you need to reschedule.,7.812,3.875,3.584,0.3536,s040_t2,41236,female,husky;smooth;professional;customer service,0
+voice_48.flac,"The meadow was full of wildflowers, and the air smelled like honey and warm grass.",5.85,3.992,3.45,0.3353,s120_t4,121238,male,gravelly;soft;soothing;documentary,0
+voice_49.flac,"We should probably leave soon if we want to beat the traffic, but I really want to see how this game ends.",7.537,3.574,3.604,0.3529,s024_t4,25238,male,smooth;conversational;characters;young adult,0
+voice_50.flac,Thank you for being so understanding. We will make sure this does not happen again.,5.338,3.934,3.411,0.3603,s191_t4,192238,female,crisp;soothing;customer service;brisk,0

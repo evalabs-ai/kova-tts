@@ -1,7 +1,7 @@
 # Demo
 
 A single-page Gradio app: type something, pick a voice, hear it start playing before it has
-finished generating. Voice cloning is on the second tab.
+finished generating. Voice cloning is one button away, in the same prompt box.
 
 ```bash
 uv sync --extra demo
@@ -16,7 +16,7 @@ install. `uv run python apps/demo/app.py` is the same thing.
 
 **Its own README is the reference**, and it is kept current with the app:
 [`apps/demo/README.md`](https://github.com/evalabs-ai/kova-tts/blob/main/apps/demo/README.md) —
-every flag, what is on each tab, and how to mount `build_app()` inside another server.
+every flag, what is on the page, and how to mount `build_app()` inside another server.
 
 Three things to expect before you open it:
 

@@ -16,7 +16,10 @@ prompted with no voice at all, which makes the model invent a speaker on each sa
    similarity 0.17 and closest pair 0.40, against 0.32 and 0.76 for a random 50.
 
 Besides `file_name` and `text`, `metadata.csv` keeps, per voice, the source clip, its seed,
-duration, UTMOS, DNSMOS and its similarity to the nearest other preset.
+duration, UTMOS, DNSMOS and its similarity to the nearest other preset. Three hand-reviewed
+columns shape the picker: `gender`, up to four `;`-separated `tags` (drafted by Gemini from the
+audio, then edited by ear), and a 0-10 `rating` that orders the list best first and is never
+shown. The picker labels each voice `07 · Female · British, crisp, storyteller`.
 
 The clips are 48 kHz mono 16-bit FLAC. Any directory laid out the same way -- audio files plus a
 `metadata.csv` with `file_name` and `text` columns -- can replace this one with

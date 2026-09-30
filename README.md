@@ -67,15 +67,17 @@ uv run kova-tts demo --preload
 Kova TTS on http://127.0.0.1:7860
 ```
 
-Open it, type something, press **Speak**. Audio starts playing while the rest is still being
+Open it, type something, press **Generate**. Audio starts playing while the rest is still being
 generated — about a quarter of a second in on a warm CUDA box, not after the clip is finished.
 `--preload` loads the weights at startup so the first press pays none of that; without it the
 first generation takes a few seconds longer and every one after is the same.
 
-Two tabs. **Speak** has the text box, a voice picker, and the sampling controls behind an
-accordion you should not need to open. **Clone a voice** shows a short passage to read aloud with
-the transcript already filled in — record yourself reading it, press Clone, and the voice is on
-the picker. Bring your own recording instead if you prefer; then the transcript is yours to type.
+One prompt box does everything. **Random** fills it with an example, a switch under it picks the
+voice source — base model, zero-shot preset, your recording or professional cloning (a LoRA) —
+and the sampling controls are behind a settings button you should not need to press. **Your
+recording** opens the cloning panel right under the text: a short passage to read aloud with
+the transcript already filled in — record yourself reading it, press Clone, and the new voice is
+selected. Bring your own recording instead if you prefer; it is transcribed for you to check.
 
 ## From Python
 

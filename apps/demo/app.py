@@ -50,11 +50,12 @@ from kova_tts.server.protocol import ErrorResponse  # noqa: E402
 # the path makes the plain imports below work in all of them.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from content import BUSY, CSS, EXAMPLES, TITLE  # noqa: E402
+from content import BUSY, CLONE_FREE, CLONE_READ, CSS, EXAMPLES, HEAD, TITLE  # noqa: E402
 from session import (  # noqa: E402
     BASE_LABEL,
     BASE_VOICE,
     BUSY_TIMEOUT,
+    DEFAULT_VOICES_REPO,
     DEFAULT_ZERO_SHOT_DIR,
     PRESET_PREFIX,
     SOURCE_BASE,
@@ -66,10 +67,11 @@ from session import (  # noqa: E402
     build_transcriber,
     load_engine,
     load_presets,
+    resolve_lora_dir,
     warm_up,
 )
 from streaming import MAX_CHARS, STREAM_PATH, add_stream_route  # noqa: E402
-from ui import build_ui, player_js  # noqa: E402
+from ui import build_theme, build_ui, player_js  # noqa: E402
 
 log = logging.getLogger("kova_tts.demo")
 
@@ -79,8 +81,11 @@ __all__ = [
     "BASE_VOICE",
     "BUSY",
     "BUSY_TIMEOUT",
+    "CLONE_FREE",
+    "CLONE_READ",
     "CLONE_SAMPLING",
     "CSS",
+    "DEFAULT_VOICES_REPO",
     "DEFAULT_ZERO_SHOT_DIR",
     "EXAMPLES",
     "MAX_CHARS",
@@ -96,11 +101,13 @@ __all__ = [
     "DemoSession",
     "add_stream_route",
     "build_app",
+    "build_theme",
     "build_transcriber",
     "build_ui",
     "load_engine",
     "load_presets",
     "main",
+    "resolve_lora_dir",
     "player_js",
     "warm_up",
 ]
@@ -139,8 +146,9 @@ def build_app(
         app,
         build_ui(session, title=title, stream_path=stream_path),
         path="/",
-        theme=gr.themes.Soft(),
+        theme=build_theme(),
         css=CSS,
+        head=HEAD,
         show_error=True,
         # The preset preview player serves its reference clips from here, which Gradio refuses
         # to do for a directory it was not told about.
@@ -167,7 +175,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default=None, help="model directory or Hub repo id")
     parser.add_argument("--codec", default=None, help="codec checkpoint")
     parser.add_argument("--wavlm", default=None, help="WavLM directory or Hub repo id")
-    parser.add_argument("--lora-dir", default=None, help="directory of LoRA voices")
+    parser.add_argument(
+        "--lora-dir",
+        default=None,
+        help="directory of LoRA voices, or a Hub repo id to download them from (default: "
+        f"KOVA_LORA_DIR, else {DEFAULT_VOICES_REPO}); pass '' for none",
+    )
     parser.add_argument(
         "--zero-shot-dir",
         default=str(DEFAULT_ZERO_SHOT_DIR),
@@ -236,9 +249,10 @@ def main(argv: list[str] | None = None) -> int:
         format="%(levelname)s %(name)s: %(message)s",
     )
 
-    # One Parakeet for the whole page: the clone tab's live transcript and the engine's
+    # One Parakeet for the whole page: the clone panel's live transcript and the engine's
     # fallback when Clone is pressed with an empty box.
     transcriber = build_transcriber(device=args.device)
+    args.lora_dir = resolve_lora_dir(args.lora_dir)
     session = DemoSession(
         loader=lambda: load_engine(
             model=args.model,

@@ -1,11 +1,17 @@
-"""The page itself: two tabs, their callbacks, and the player wired to the streaming endpoint.
+"""The page itself: one prompt box, its panels and callbacks, and the player wired to the stream.
+
+Everything happens from the prompt box. Random fills it with an example, and the toolbar's switch
+picks where the voice comes from -- the voice within that source on a line of its own below it,
+so the toolbar keeps one shape. Picking "Your recording" with nothing recorded opens the cloning
+panel right beneath the text, and the settings button opens the sampling controls. There are no
+tabs to go looking in.
 
 Speaking never reaches Python. Gradio's own streaming audio component would take the frames
 :meth:`KovaTTS.stream` yields, re-encode each one to AAC with ffmpeg and serve them as HLS
 segments -- a lossy codec applied 2.5 times a second, with an encoder priming gap at every
 segment join. It is audible, and it is not in the finished clip, so one generation comes out
 damaged in the streaming player and clean in the other. The page therefore does not use that
-component: the Speak button hands the control values to ``player.js``, which pulls raw
+component: the Generate button hands the control values to ``player.js``, which pulls raw
 16-bit PCM from :data:`~streaming.STREAM_PATH` and schedules it on a Web Audio clock. Nothing is
 re-encoded between the codec and the speakers.
 """
@@ -13,6 +19,7 @@ re-encoded between the codec and the speakers.
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 from typing import Any
 
@@ -21,32 +28,120 @@ import gradio as gr
 from kova_tts import TTS_SAMPLING
 
 from content import (
-    CLONE_HELP,
+    CLONE_FREE,
+    CLONE_HEAD_HTML,
+    CLONE_READ,
     CLONE_SCRIPTS,
+    COUNT_JS,
     EXAMPLES,
+    GENERATE_JS,
+    INTRO_HTML,
     PLAYER_HTML,
-    SPEAK_JS,
-    STOP_JS,
-    TAGLINE,
+    PRIVACY_HTML,
+    SETTINGS_HEAD_HTML,
+    SOURCE_NOTE_BASE,
+    SOURCE_NOTE_CLONE,
+    SOURCE_NOTE_LORA,
+    SOURCE_NOTE_PRESET,
     TITLE,
+    TRANSCRIPT_HINT,
+    TRANSCRIPT_PLACEHOLDER,
+    header_html,
 )
-from session import BASE_VOICE, SOURCE_BASE, SOURCE_CLONE, DemoSession, load_engine
+from session import (
+    BASE_VOICE,
+    SOURCE_BASE,
+    SOURCE_CLONE,
+    SOURCE_LORA,
+    SOURCE_PRESET,
+    DemoSession,
+    load_engine,
+)
 from streaming import MAX_CHARS, STREAM_PATH
+
+#: Both audio players' waveforms, in the page's palette rather than Gradio's lavender: warm
+#: bars, teal for what has been heard.
+_WAVEFORM = gr.WaveformOptions(waveform_color="#c4bdb0", waveform_progress_color="#0f8f86")
+
+#: Classes for the toolbar buttons that open a panel, closed and open.
+_TOGGLE = ["kova-btn"]
+_TOGGLE_ON = ["kova-btn", "kova-on"]
+
+_SOURCE_NOTES = {
+    SOURCE_BASE: SOURCE_NOTE_BASE,
+    SOURCE_PRESET: SOURCE_NOTE_PRESET,
+    SOURCE_CLONE: SOURCE_NOTE_CLONE,
+    SOURCE_LORA: SOURCE_NOTE_LORA,
+}
+
+
+def source_note_html(source: str | None) -> str:
+    """The line under the source switch saying what that kind of voice is."""
+    note = _SOURCE_NOTES.get(source or SOURCE_BASE, "")
+    return f'<p class="kova-source-note">{note}</p>' if note else ""
+
+
+def build_theme() -> gr.themes.Base:
+    """Gradio's side of the kova.ai look; :data:`~content.CSS` does the rest.
+
+    The fonts are the part only a theme can set everywhere, including inside the components the
+    stylesheet never names.
+    """
+    return gr.themes.Base(
+        primary_hue=gr.themes.colors.teal,
+        neutral_hue=gr.themes.colors.stone,
+        radius_size=gr.themes.sizes.radius_lg,
+        font=["General Sans", gr.themes.GoogleFont("Hanken Grotesk"), "system-ui", "sans-serif"],
+        font_mono=[gr.themes.GoogleFont("JetBrains Mono"), "ui-monospace", "monospace"],
+    ).set(
+        body_background_fill="#f5f1ea",
+        body_background_fill_dark="#f5f1ea",
+        body_text_color="#2a2826",
+        body_text_color_dark="#2a2826",
+        body_text_color_subdued="#6b6862",
+        body_text_color_subdued_dark="#6b6862",
+        background_fill_primary="#faf8f4",
+        background_fill_primary_dark="#faf8f4",
+        background_fill_secondary="#f1ece3",
+        background_fill_secondary_dark="#f1ece3",
+        border_color_primary="#d9d2c7",
+        border_color_primary_dark="#d9d2c7",
+        block_background_fill="transparent",
+        block_background_fill_dark="transparent",
+        input_background_fill="#ffffff",
+        input_background_fill_dark="#ffffff",
+        color_accent="#0f8f86",
+        color_accent_soft="#e6eee8",
+        color_accent_soft_dark="#e6eee8",
+        slider_color="#0f8f86",
+        slider_color_dark="#0f8f86",
+        button_primary_background_fill="#0b746c",
+        button_primary_background_fill_dark="#0b746c",
+        button_primary_background_fill_hover="#08453f",
+        button_primary_background_fill_hover_dark="#08453f",
+        button_primary_text_color="#ffffff",
+        button_primary_text_color_dark="#ffffff",
+        link_text_color="#0b746c",
+        link_text_color_dark="#0b746c",
+    )
 
 
 def player_js(*, stream_path: str = STREAM_PATH, model_loaded: bool = False) -> str:
-    """``player.js``, wrapped as the browser-side handler for a Gradio load event.
+    """``player.js`` and ``switch.js``, wrapped as the browser-side handler for a load event.
 
-    The settings it reads are written just before it, rather than templated into it, so the file
-    stays a plain script that a person can read and a linter could check.
+    The settings the player reads are written just before it, rather than templated into it, so
+    both files stay plain scripts that a person can read and a linter could check.
     """
-    source = Path(__file__).with_name("player.js").read_text(encoding="utf-8")
+    here = Path(__file__).parent
+    source = "\n".join(
+        (here / name).read_text(encoding="utf-8") for name in ("player.js", "switch.js")
+    )
     return (
         "() => {\n"
         f"  window.KOVA_STREAM_PATH = {json.dumps(stream_path)};\n"
         f"  window.KOVA_MAX_CHARS = {MAX_CHARS};\n"
         f"  window.KOVA_MODEL_LOADED = {json.dumps(bool(model_loaded))};\n"
-        # Gradio re-runs a load handler on every connection; the player is a singleton.
+        # Gradio re-runs a load handler on every connection; the page's scripts run once.
         "  if (window.kovaDemo) return;\n"
         f"{source}\n"
         "}"
@@ -58,15 +153,18 @@ def build_ui(
     *,
     title: str = TITLE,
     stream_path: str = STREAM_PATH,
+    docs_url: str | None = "/docs",
 ) -> gr.Blocks:
     """Construct the interface, without launching it.
 
     Args:
         session: The state the callbacks run against. ``None`` builds one that loads the real
             engine from the environment on first use.
-        title: Browser tab title and page heading.
+        title: Browser tab title.
         stream_path: Where the browser should POST for audio. Only worth changing if these
             Blocks are mounted somewhere other than :func:`~app.build_app` puts them.
+        docs_url: Where the header's "API docs" link points, or ``None`` for no link.
+            :func:`~app.build_app` serves the endpoint's OpenAPI page at ``/docs``.
 
     Returns:
         A :class:`gradio.Blocks` ready for ``.launch()``, or for a test to inspect. It is only
@@ -74,239 +172,420 @@ def build_ui(
         :func:`~app.build_app` is for.
 
     The theme and stylesheet are not set here: Gradio 6 moved both to ``launch()``, so
-    :func:`~app.build_app` applies them and a caller mounting these Blocks elsewhere picks its
-    own.
+    :func:`~app.build_app` applies them (:func:`build_theme` and :data:`~content.CSS`) and a
+    caller mounting these Blocks elsewhere picks its own.
     """
     session = session or DemoSession(loader=load_engine)
 
     # Analytics off: this runs on someone else's machine, against their weights, and Gradio's
     # default is to phone home on launch and on error.
-    with gr.Blocks(title=title, fill_width=False, analytics_enabled=False) as ui:
-        gr.Markdown(f"# {title}\n{TAGLINE}")
-        gr.Markdown("\n\n".join(f"- {line}" for line in session.notices()))
+    with gr.Blocks(title=title, fill_width=True, analytics_enabled=False) as ui:
+        gr.HTML(header_html(session.summary(), docs_url), padding=False)
 
-        with gr.Tabs() as tabs:
-            with gr.Tab("Speak", id="speak"):
-                with gr.Row():
-                    with gr.Column(scale=3):
-                        text = gr.Textbox(
-                            label="Text",
-                            lines=4,
-                            max_lines=14,
-                            autofocus=True,
-                            placeholder="Say something...",
-                        )
-                    with gr.Column(scale=2):
-                        source = gr.Radio(
-                            choices=session.sources(),
-                            value=SOURCE_BASE,
-                            label="Voice source",
-                        )
-                        # The value the player sends; its choices follow the source. Hidden for
-                        # the base model, which has exactly one voice.
-                        voice = gr.Dropdown(
-                            choices=session.choices(SOURCE_BASE),
-                            value=BASE_VOICE,
-                            label="Voice",
-                            visible=False,
-                        )
-                        preset_preview = gr.Audio(
-                            label="Reference clip",
-                            interactive=False,
-                            visible=False,
-                        )
-                        preset_text = gr.Markdown(visible=False)
-                        clone_hint = gr.Markdown(
-                            "No recordings yet. Record or upload one on the **Clone a voice** "
-                            "tab and it will appear here.",
-                            visible=False,
-                        )
-                        go_clone = gr.Button("Record or upload a voice", visible=False)
-                        with gr.Row():
-                            speak_button = gr.Button("Speak", variant="primary", scale=3)
-                            stop_button = gr.Button("Stop", variant="stop", scale=1)
+        with gr.Column(elem_id="kova-main"):
+            gr.HTML(INTRO_HTML, padding=False)
+            warnings = session.warnings()
+            if warnings:
+                gr.Markdown("\n\n".join(warnings), elem_id="kova-banner")
 
-                gr.Examples(
-                    examples=[[prompt] for prompt in EXAMPLES],
-                    inputs=[text],
-                    label="Or try one of these",
+            with gr.Column(elem_id="kova-composer"):
+                text = gr.Textbox(
+                    show_label=False,
+                    container=False,
+                    lines=5,
+                    max_lines=14,
+                    autofocus=True,
+                    placeholder=f"Type or paste up to {MAX_CHARS:,} characters…",
+                    elem_id="kova-text",
+                )
+                # Under the text, as on kova.ai: an example to try, and how much room is left.
+                with gr.Row(elem_id="kova-meta"):
+                    random_button = gr.Button(
+                        "Random", elem_id="kova-random", elem_classes=["kova-btn", "kova-plain"]
+                    )
+                    gr.HTML(
+                        f'<span id="kova-count">0 / {MAX_CHARS:,}</span>',
+                        padding=False,
+                        elem_id="kova-count-box",
+                    )
+                with gr.Row(elem_id="kova-toolbar"):
+                    # The voice is picked in two steps: where it comes from, then which one.
+                    source = gr.Radio(
+                        choices=session.sources(),
+                        value=SOURCE_BASE,
+                        show_label=False,
+                        container=False,
+                        label="Voice source",
+                        elem_id="kova-source",
+                        elem_classes=["kova-switch"],
+                    )
+                    settings = gr.Button(
+                        "Settings",
+                        elem_id="kova-settings",
+                        elem_classes=[*_TOGGLE, "kova-icon-only"],
+                    )
+                    # Stateless: every press starts a fresh generation, replacing one in flight.
+                    generate_button = gr.Button(
+                        "Generate",
+                        elem_id="kova-generate",
+                        elem_classes=["kova-btn", "kova-primary"],
+                    )
+
+                source_note = gr.HTML(
+                    source_note_html(SOURCE_BASE), padding=False, elem_id="kova-source-note"
                 )
 
-                with gr.Accordion("Advanced", open=False):
-                    gr.Markdown(
-                        "These start at the preset for the selected voice, which is what the "
-                        "model was tuned with. The cloning preset differs only in its token "
-                        "budget -- switching voice resets all five."
+                # Which voice within the source, on a line of its own so the toolbar keeps its
+                # shape whatever the source. Hidden for the base model, which has exactly one.
+                with gr.Row(visible=False, elem_id="kova-voice-row") as voice_row:
+                    gr.HTML('<span class="kova-row-label">voice</span>', padding=False)
+                    # The value the player sends; its choices follow the source.
+                    voice = gr.Dropdown(
+                        choices=session.choices(SOURCE_BASE),
+                        value=BASE_VOICE,
+                        show_label=False,
+                        container=False,
+                        label="Voice",
+                        elem_id="kova-voice",
                     )
-                    with gr.Row():
-                        temperature = gr.Slider(
-                            0.1, 1.5, TTS_SAMPLING.temperature, step=0.05, label="Temperature"
-                        )
-                        top_p = gr.Slider(0.05, 1.0, TTS_SAMPLING.top_p, step=0.01, label="Top-p")
-                    with gr.Row():
-                        top_k = gr.Slider(
-                            0, 200, TTS_SAMPLING.top_k, step=1, label="Top-k", info="0 turns it off"
-                        )
-                        repetition_penalty = gr.Slider(
-                            1.0,
-                            2.0,
-                            TTS_SAMPLING.repetition_penalty,
-                            step=0.05,
-                            label="Repetition penalty",
-                        )
-                    max_tokens = gr.Slider(
-                        256,
-                        4096,
-                        TTS_SAMPLING.max_tokens,
-                        # Fine enough a step to land on both presets exactly: a coarser one
-                        # would snap the cloning budget to a number nothing was tuned with.
-                        step=4,
-                        label="Token budget",
-                        info="80 tokens is one second of audio; this caps a single sentence.",
+                    # Only for "Your recording": the way to clone another once there are some.
+                    record_more = gr.Button(
+                        "New recording",
+                        visible=False,
+                        elem_id="kova-record-more",
+                        elem_classes=["kova-btn", "kova-plain"],
                     )
 
-                gr.HTML(PLAYER_HTML, padding=False)
+                # What the picked voice sounds like, for a zero-shot preset: its reference clip
+                # and the transcript it is encoded from.
+                with gr.Row(visible=False, elem_id="kova-preview") as preview_row:
+                    preset_preview = gr.Audio(
+                        label="Reference clip",
+                        interactive=False,
+                        waveform_options=_WAVEFORM,
+                        elem_id="kova-preset-audio",
+                    )
+                    preset_text = gr.Markdown(elem_id="kova-preset-text")
+                # "Professional cloning" with no adapters installed.
+                with gr.Row(visible=False, elem_id="kova-empty-loras") as lora_hint:
+                    gr.HTML(
+                        '<p class="kova-hint">No professional voices installed. Train a LoRA '
+                        "adapter on your recordings, then point <code>--lora-dir</code> or "
+                        "<code>KOVA_LORA_DIR</code> at it.</p>",
+                        padding=False,
+                    )
+                # "Your recording" with nothing recorded, once the cloning panel is closed.
+                with gr.Row(visible=False, elem_id="kova-empty-clones") as clone_hint:
+                    gr.HTML(
+                        '<p class="kova-hint">No recordings yet — clone one and it will '
+                        "appear here.</p>",
+                        padding=False,
+                    )
+                    go_clone = gr.Button(
+                        "Record a voice",
+                        elem_id="kova-go-clone",
+                        elem_classes=["kova-btn", "kova-no-icon"],
+                        scale=0,
+                    )
 
-            with gr.Tab("Clone a voice", id="clone"):
-                gr.Markdown(CLONE_HELP)
+                with gr.Column(visible=False, elem_id="kova-clone") as clone_panel:
+                    with gr.Row(equal_height=False):
+                        gr.HTML(CLONE_HEAD_HTML, padding=False)
+                        close_clone = gr.Button(
+                            "Close",
+                            elem_id="kova-clone-close",
+                            elem_classes=["kova-btn", "kova-plain", "kova-icon-only"],
+                            scale=0,
+                        )
+                    # Read the passage, whose text is then the transcript, or say anything / bring
+                    # a file, and have it transcribed.
+                    clone_mode = gr.Radio(
+                        choices=[CLONE_READ, CLONE_FREE],
+                        value=CLONE_READ,
+                        show_label=False,
+                        container=False,
+                        label="How to clone",
+                        elem_id="kova-clone-mode",
+                        elem_classes=["kova-switch"],
+                    )
+                    with gr.Row(elem_id="kova-clone-row"):
+                        with gr.Column(elem_id="kova-script-card") as script_card:
+                            with gr.Row(equal_height=True):
+                                gr.HTML(
+                                    '<span class="kova-eyebrow">Read aloud</span>', padding=False
+                                )
+                                another_script = gr.Button(
+                                    "Another",
+                                    elem_id="kova-another",
+                                    elem_classes=["kova-btn", "kova-plain"],
+                                    scale=0,
+                                )
+                            clone_script = gr.Textbox(
+                                value=CLONE_SCRIPTS[0],
+                                show_label=False,
+                                container=False,
+                                lines=4,
+                                interactive=False,
+                                elem_id="kova-script",
+                            )
+                        # Freestyle's stand-in for the passage: what the clip says, filled in by
+                        # ASR the moment it arrives and editable for checking.
+                        with gr.Column(visible=False, elem_id="kova-transcript-card") as (
+                            transcript_card
+                        ):
+                            gr.HTML('<span class="kova-eyebrow">Transcript</span>', padding=False)
+                            clone_transcript = gr.Textbox(
+                                show_label=False,
+                                container=False,
+                                label="Transcript",
+                                lines=4,
+                                placeholder=TRANSCRIPT_PLACEHOLDER,
+                                elem_id="kova-transcript",
+                            )
+                            gr.HTML(f'<p class="kova-note">{TRANSCRIPT_HINT}</p>', padding=False)
+                        # The recording in its card, and naming it on a line of its own beneath.
+                        with gr.Column(elem_id="kova-record-side"):
+                            with gr.Column(elem_id="kova-record-card"):
+                                # Read aloud is the microphone's; a file joins it in freestyle.
+                                reference = gr.Audio(
+                                    sources=["microphone"],
+                                    type="filepath",
+                                    label="Your recording",
+                                    waveform_options=_WAVEFORM,
+                                    elem_id="kova-reference",
+                                )
+                            with gr.Row(equal_height=True, elem_id="kova-name-row"):
+                                clone_name = gr.Textbox(
+                                    label="Name",
+                                    show_label=False,
+                                    container=False,
+                                    placeholder="Name this voice",
+                                    max_lines=1,
+                                    elem_id="kova-clone-name",
+                                )
+                                clone_button = gr.Button(
+                                    "Clone",
+                                    elem_id="kova-clone-button",
+                                    elem_classes=["kova-btn", "kova-primary", "kova-no-icon"],
+                                    scale=0,
+                                )
+                    clone_status = gr.Markdown("", elem_id="kova-clone-status")
+                    gr.HTML(PRIVACY_HTML, padding=False)
+
+            with gr.Column(visible=False, elem_id="kova-settings-panel") as settings_panel:
+                with gr.Row(equal_height=False):
+                    gr.HTML(SETTINGS_HEAD_HTML, padding=False)
+                    reset = gr.Button(
+                        "Reset to preset",
+                        elem_id="kova-reset",
+                        elem_classes=["kova-btn", "kova-plain", "kova-no-icon"],
+                        scale=0,
+                    )
                 with gr.Row():
-                    with gr.Column():
-                        reference = gr.Audio(
-                            sources=["upload", "microphone"],
-                            type="filepath",
-                            label="Reference recording",
-                        )
-                        clone_name = gr.Textbox(
-                            label="Name this voice",
-                            placeholder="taken from the filename if you leave it empty",
-                        )
-                    with gr.Column():
-                        clone_script = gr.Textbox(
-                            label="Read this aloud",
-                            value=CLONE_SCRIPTS[0],
-                            lines=4,
-                            interactive=False,
-                        )
-                        # Prefilled with the script and still editable, so reading the script
-                        # needs no typing while an uploaded clip can have its own transcript.
-                        clone_transcript = gr.Textbox(
-                            label="Transcript",
-                            value=CLONE_SCRIPTS[0],
-                            lines=4,
-                            info="What the recording says, word for word.",
-                        )
-                        with gr.Row():
-                            another_script = gr.Button("Different script")
-                            clone_button = gr.Button("Clone this voice", variant="primary")
-                clone_status = gr.Markdown("")
+                    temperature = gr.Slider(
+                        0.1,
+                        1.5,
+                        TTS_SAMPLING.temperature,
+                        step=0.05,
+                        label="Temperature",
+                        info="Higher is livelier, lower is steadier.",
+                    )
+                    top_p = gr.Slider(
+                        0.05,
+                        1.0,
+                        TTS_SAMPLING.top_p,
+                        step=0.01,
+                        label="Top-p",
+                        info="Share of likely sounds considered.",
+                    )
+                with gr.Row():
+                    top_k = gr.Slider(
+                        0, 200, TTS_SAMPLING.top_k, step=1, label="Top-k", info="0 turns it off."
+                    )
+                    repetition_penalty = gr.Slider(
+                        1.0,
+                        2.0,
+                        TTS_SAMPLING.repetition_penalty,
+                        step=0.05,
+                        label="Repetition penalty",
+                        info="Discourages stutters and loops.",
+                    )
+                max_tokens = gr.Slider(
+                    256,
+                    4096,
+                    TTS_SAMPLING.max_tokens,
+                    # Fine enough a step to land on both presets exactly: a coarser one
+                    # would snap the cloning budget to a number nothing was tuned with.
+                    step=4,
+                    label="Token budget",
+                    info="80 tokens is one second of audio; this caps a single sentence.",
+                )
+
+            gr.HTML(PLAYER_HTML, padding=False)
+
+        settings_open = gr.State(False)
 
         # ----------------------------------------------------------------------- behaviour
 
-        def on_voice_change(name: str) -> tuple[Any, ...]:
+        def preset_values(name: str) -> tuple[float, float, int, float, int]:
             preset = session.preset(name)
-            ref = session.preset_reference(name)
             return (
                 preset.temperature,
                 preset.top_p,
                 preset.top_k,
                 preset.repetition_penalty,
                 preset.max_tokens,
-                gr.update(value=ref[0] if ref else None, visible=ref is not None),
-                gr.update(
-                    value=f"*Reference transcript:* “{ref[1]}”" if ref else "",
-                    visible=ref is not None,
-                ),
+            )
+
+        def on_voice_change(name: str) -> tuple[Any, ...]:
+            """The sliders follow the voice's preset; a zero-shot preset shows its reference."""
+            ref = session.preset_reference(name)
+            return (
+                *preset_values(name),
+                gr.Row(visible=ref is not None),
+                gr.update(value=ref[0] if ref else None),
+                # Two paragraphs: the stylesheet turns the first into the card's heading.
+                f"Reference transcript\n\n“{ref[1]}”" if ref else "",
             )
 
         def picker_for(chosen_source: str, value: str | None = None) -> tuple[Any, ...]:
-            """The picker and the hints under it, for one voice source."""
+            """Everything under the toolbar that follows the voice source.
+
+            The voice picker and its row, New recording, the two empty-source hints, and the
+            cloning panel -- which "Your recording" opens straight away while there is nothing
+            to pick, and every other source closes.
+            """
             options = session.choices(chosen_source)
             values = [v for _, v in options]
             selected = value if value in values else (values[0] if values else None)
-            empty_clones = chosen_source == SOURCE_CLONE and not options
             return (
-                gr.update(
-                    choices=options,
-                    value=selected,
-                    visible=chosen_source != SOURCE_BASE and bool(options),
-                ),
-                gr.update(visible=empty_clones),
-                gr.update(visible=empty_clones),
+                gr.update(choices=options, value=selected),
+                gr.Row(visible=chosen_source != SOURCE_BASE and bool(options)),
+                gr.Button(visible=chosen_source == SOURCE_CLONE),
+                gr.Row(visible=chosen_source == SOURCE_LORA and not options),
+                gr.Row(visible=False),
+                gr.Column(visible=chosen_source == SOURCE_CLONE and not options),
             )
 
-        def on_source_change(chosen_source: str) -> tuple[Any, ...]:
-            return picker_for(chosen_source)
+        def on_random(current: str) -> str:
+            """An example other than the one already in the box."""
+            pool = [prompt for prompt in EXAMPLES if prompt != (current or "").strip()]
+            return random.choice(pool or EXAMPLES)
 
-        def on_clone(*values: Any) -> tuple[Any, ...]:
-            message, cloned = session.clone_voice(*values)
+        def toggle_settings(is_open: bool) -> tuple[bool, Any, Any]:
+            """Open the settings panel if it is closed, and close it if it is open."""
+            now = not is_open
+            classes = [*(_TOGGLE_ON if now else _TOGGLE), "kova-icon-only"]
+            return now, gr.Column(visible=now), gr.Button(elem_classes=classes)
+
+        def close_clone_panel(chosen_source: str) -> tuple[Any, Any]:
+            """Close the cloning panel, leaving the way back if nothing has been recorded."""
+            empty = chosen_source == SOURCE_CLONE and not session.choices(SOURCE_CLONE)
+            return gr.Column(visible=False), gr.Row(visible=empty)
+
+        def open_clone_panel() -> tuple[Any, Any]:
+            return gr.Column(visible=True), gr.Row(visible=False)
+
+        def on_clone(
+            reference: str | None, mode: str, script: str, typed: str, name: str
+        ) -> tuple[Any, ...]:
+            # Reading aloud, the passage is the transcript; freestyle, it is the checked box.
+            transcript = script if mode == CLONE_READ else typed
+            message, cloned = session.clone_voice(reference, transcript, name)
             if cloned is None:
-                return (message, gr.update(), gr.update(), gr.update(), gr.update(), gr.update())
-            # Land the user where the new voice is usable, already selected.
+                # The panel stays open, with the reason in it, for another try.
+                return message, *(gr.update(),) * 10
+            # Land the user where the new voice is usable: panel closed, voice already selected,
+            # and the panel emptied -- its message too -- so New recording starts a fresh take.
             return (
-                message,
+                "",
                 gr.update(value=SOURCE_CLONE),
                 *picker_for(SOURCE_CLONE, cloned),
-                gr.Tabs(selected="speak"),
+                None,
+                "",
+                "",
             )
 
-        def on_another_script(shown: str, typed: str) -> tuple[Any, Any]:
-            """Rotate to the next script, keeping the transcript in step with it.
+        def show_mode(mode: str) -> tuple[Any, Any, Any]:
+            """The passage or the transcript card, and the recorder's sources, for one mode."""
+            free = mode == CLONE_FREE
+            return (
+                gr.Column(visible=not free),
+                gr.Column(visible=free),
+                gr.update(sources=["microphone", "upload"] if free else ["microphone"]),
+            )
 
-            The transcript only follows along while it still matches the script on display.
-            Someone who has pasted their own recording's transcript must not lose it to a
-            misplaced click.
+        def transcribe(mode: str, path: str | None, typed: str) -> tuple[Any, Any]:
+            """Fill the freestyle transcript from the clip, unless one is already there.
+
+            Runs when a clip arrives and when freestyle is picked with a clip already recorded.
+            Reading aloud needs none of it, and a transcript someone has typed is never replaced.
             """
-            index = CLONE_SCRIPTS.index(shown) if shown in CLONE_SCRIPTS else -1
-            nxt = CLONE_SCRIPTS[(index + 1) % len(CLONE_SCRIPTS)]
-            follows = (typed or "").strip() == (shown or "").strip()
-            return nxt, (nxt if follows else gr.update())
+            if mode != CLONE_FREE or not path or (typed or "").strip():
+                return gr.update(), gr.update()
+            status, heard = session.transcribe_reference(path)
+            if heard is None:
+                return status, gr.update()
+            # The card's own note already says to check it; the status line is for trouble.
+            return "", heard
 
-        # The Speak button hands the control values straight to the player; a Gradio event in
+        def on_arrival(mode: str, path: str | None) -> tuple[Any, Any]:
+            """A new clip replaces whatever the last one was heard to say."""
+            return transcribe(mode, path, "")
+
+        def on_another_script(shown: str) -> str:
+            """Rotate to the next passage."""
+            index = CLONE_SCRIPTS.index(shown) if shown in CLONE_SCRIPTS else -1
+            return CLONE_SCRIPTS[(index + 1) % len(CLONE_SCRIPTS)]
+
+        # The Generate button hands the control values straight to the player; a Gradio event in
         # the middle could only re-encode the audio or hold it back.
         controls = [text, voice, temperature, top_p, top_k, repetition_penalty, max_tokens]
-        speak_button.click(None, controls, None, js=SPEAK_JS)
-        text.submit(None, controls, None, js=SPEAK_JS)
-        stop_button.click(None, None, None, js=STOP_JS)
+        generate_button.click(None, controls, None, js=GENERATE_JS)
+        text.submit(None, controls, None, js=GENERATE_JS)
+        text.change(None, text, None, js=COUNT_JS)
 
-        voice.change(
-            on_voice_change,
-            voice,
-            [
-                temperature,
-                top_p,
-                top_k,
-                repetition_penalty,
-                max_tokens,
-                preset_preview,
-                preset_text,
-            ],
+        # Opening a panel or dealing an example touches no model, so none of it queues behind
+        # a clone in progress.
+        instant: dict[str, Any] = {"queue": False, "show_progress": "hidden"}
+        random_button.click(on_random, text, text, **instant)
+        for opener in (go_clone, record_more):
+            opener.click(open_clone_panel, None, [clone_panel, clone_hint], **instant)
+        close_clone.click(close_clone_panel, source, [clone_panel, clone_hint], **instant)
+        settings.click(
+            toggle_settings, settings_open, [settings_open, settings_panel, settings], **instant
         )
-        # Only a person clicking changes the source; on_clone sets it programmatically and
-        # fills the picker itself, which .input (unlike .change) leaves alone.
-        source.input(on_source_change, source, [voice, clone_hint, go_clone])
-        go_clone.click(lambda: gr.Tabs(selected="clone"), None, tabs)
-        another_script.click(
-            on_another_script,
-            [clone_script, clone_transcript],
-            [clone_script, clone_transcript],
+
+        sliders = [temperature, top_p, top_k, repetition_penalty, max_tokens]
+        voice.change(on_voice_change, voice, [*sliders, preview_row, preset_preview, preset_text])
+        # Only a person picking changes the source; on_clone sets it programmatically and fills
+        # the picker itself, which .input (unlike .change) leaves alone.
+        by_source = [voice, voice_row, record_more, lora_hint, clone_hint, clone_panel]
+        source.input(picker_for, source, by_source, **instant)
+        # .change, not .input: cloning a voice switches the source too, and the note follows.
+        source.change(source_note_html, source, source_note, **instant)
+        reset.click(preset_values, voice, sliders, **instant)
+        another_script.click(on_another_script, clone_script, clone_script, **instant)
+        # Showing the right card is instant; transcribing a clip already recorded is not.
+        clone_mode.input(
+            show_mode, clone_mode, [script_card, transcript_card, reference], **instant
+        ).then(
+            transcribe,
+            [clone_mode, reference, clone_transcript],
+            [clone_status, clone_transcript],
+            show_progress="minimal",
         )
         clone_button.click(
             on_clone,
-            [reference, clone_transcript, clone_name],
-            [clone_status, source, voice, clone_hint, go_clone, tabs],
+            [reference, clone_mode, clone_script, clone_transcript, clone_name],
+            [clone_status, source, *by_source, reference, clone_transcript, clone_name],
             concurrency_limit=1,
         )
-
-        def on_reference(path: str | None) -> tuple[Any, Any]:
-            """Transcribe a recording the moment it arrives, so the box holds what was said."""
-            status, heard = session.transcribe_reference(path)
-            return status, (heard if heard is not None else gr.update())
-
         # Both ways a clip arrives. Not .change: that also fires when the clip is cleared.
         for arrival in (reference.stop_recording, reference.upload):
             arrival(
-                on_reference,
-                reference,
+                on_arrival,
+                [clone_mode, reference],
                 [clone_status, clone_transcript],
                 show_progress="minimal",
             )
