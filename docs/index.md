@@ -93,11 +93,10 @@ arrives, so a client that is still receiving the text waits for the text as much
 The first generation in a process is much slower than these: the codec is loaded lazily on first
 use and cuDNN autotunes its convolutions then. See [Quickstart](quickstart.md#what-warm-means).
 
-On an Apple Silicon Mac the shape is different enough to need its own page. The base M1 figures,
-against a 4-bit MLX checkpoint: the LM decodes at ~82 codes/second (1.02x real time), the codec
-takes its own share of the same GPU, and the two together land at 0.7–0.8x real time.
-[Apple Silicon](apple-silicon.md) has the rest, including what the torch fallback costs and what
-does not work there.
+On an Apple Silicon Mac the shape is different enough to need its own page. The published
+checkpoint runs there under torch on Metal, where a base M1 decodes ~19 codes/second (0.24x real
+time). A 4-bit MLX build, not published yet, takes the LM to ~82 codes/second (1.02x) and the
+whole pipeline to 0.7–0.8x. [Apple Silicon](apple-silicon.md) has the rest.
 
 ## Hosted
 

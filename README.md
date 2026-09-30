@@ -32,9 +32,9 @@ cd kova-tts
 uv sync                   # core inference; add extras for the demo, server or training
 ```
 
-On an Apple Silicon Mac, add `--extra mlx` and use a checkpoint converted for it: a base M1
-lands at 0.7–0.8x real time end to end, against several times real time on a recent NVIDIA card.
-See [docs/apple-silicon.md](docs/apple-silicon.md).
+On an Apple Silicon Mac the same command works: the published bf16 checkpoint runs under torch
+on Metal, well below real time on a base M1. A 4-bit MLX build that brings a base M1 to
+0.7–0.8x real time is not published yet. See [docs/apple-silicon.md](docs/apple-silicon.md).
 
 The base model and codec download automatically on first use. To download them ahead of time:
 

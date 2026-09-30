@@ -1,8 +1,12 @@
 # Apple Silicon
 
-Kova runs on an M-series Mac. Both halves of the model do, but not the same way: the codec is
-torch on Metal, and the language model is [MLX](https://github.com/ml-explore/mlx) reading a
-checkpoint converted for it.
+Kova runs on an M-series Mac, and the published checkpoint runs there as it is. The codec is
+torch on Metal, and so is the language model: the bf16 checkpoint loads under torch, exactly as
+on Linux, just without CUDA. That works, but it is well below real time.
+
+The faster way is [MLX](https://github.com/ml-explore/mlx) reading a checkpoint converted for it:
+4-bit, with a sliced output head. **That build is not published yet.** Until it is, everything on
+this page about the MLX backend describes where Macs are headed, not what you can download today.
 
 Everything on this page was measured on the smallest machine worth trying — a **base M1
 MacBook Pro, 16 GB** — with mlx 0.32.0, mlx-lm 0.31.3 and torch 2.13. A larger M-series chip has
@@ -10,6 +14,17 @@ several times the memory bandwidth and every number below is bandwidth-bound, so
 a floor.
 
 ## Install
+
+For the published checkpoint, nothing Mac-specific:
+
+```bash
+uv sync                                   # or: uv sync --extra demo, --extra server, ...
+uv run kova-tts generate "Hello from a Mac." --out hello.wav
+```
+
+The model and codec download from the Hub on first use, and torch picks Metal (`mps`) on its own.
+
+For an MLX-converted checkpoint, add the `mlx` extra:
 
 ```bash
 uv sync --extra mlx
@@ -24,12 +39,8 @@ demo` — because `uv sync` prunes extras it is not asked for.
 
 ## The two artifacts
 
-Point `.env` at them and nothing else needs configuring:
-
-```ini
-KOVA_MODEL_PATH=/path/to/kova-1b-mlx-4bit-g128
-KOVA_CODEC_PATH=/path/to/kova-codec.pt
-```
+With nothing configured, the model is the published bf16 checkpoint and the codec is the one
+published beside it:
 
 ```bash
 uv run kova-tts paths
@@ -38,12 +49,22 @@ uv run kova-tts paths
 `paths` prints which decode loop those artifacts resolve to, before anything is loaded:
 
 ```
-model     /Users/you/models/kova-1b-mlx-4bit-g128
-codec     /Users/you/models/kova-codec.pt
-backend   mlx
+config    no .env found
+model     kova-ai/kova-tts-1
+wavlm     microsoft/wavlm-large
+codec     ~/.cache/huggingface/hub/models--kova-ai--kova-tts-1/snapshots/.../codec.pt
+loras     not configured
+voices    none
+backend   torch
 ```
 
-### The model
+Once you have an MLX build, point `.env` at it and the backend follows:
+
+```ini
+KOVA_MODEL_PATH=/path/to/kova-1b-mlx-4bit-g128
+```
+
+### The MLX model (not published yet)
 
 An MLX artifact, not the bf16 checkpoint. Three things were done to it, and the backend checks
 for all three:
@@ -69,7 +90,8 @@ extra tensors loads too; the 0.7 GB file is what you want to move to a laptop.
 ## Which backend runs
 
 The artifact decides. `KovaTTS.from_pretrained()` reads the model directory and picks the loop
-that can load it, so on a converted checkpoint you get MLX without asking.
+that can load it, so on a converted checkpoint you get MLX without asking. The published
+checkpoint, whether named by its Hub id or downloaded, always runs under torch.
 
 | | |
 |---|---|
@@ -111,7 +133,10 @@ kind of number: measured warm with a short KV cache and no prefill, which is the
 ever goes, and a real utterance pays both.
 
 The two halves take turns on one GPU, so the rates add as reciprocals: `1/(1/0.86 + 1/5.0)` is
-0.73. Running them on separate threads does **not** help — measured at 0.98x, i.e. slightly
+0.73. The same arithmetic puts the published bf16 checkpoint under torch at about
+`1/(1/0.24 + 1/5.0)`, 0.23x real time on a base M1. That figure is worked out from the two
+measured rates rather than measured end to end; streamed playback will stall, so render to a
+file rather than listening live. Running them on separate threads does **not** help — measured at 0.98x, i.e. slightly
 worse — because both are memory-bound and the GPU is already saturated, so their times are
 simply additive.
 
@@ -224,9 +249,11 @@ Encoding stays fp32 everywhere, cloning included.
 
 ## What does not work here
 
-**LoRA voices.** A peft adapter is bf16 matrices; the MLX model's projections are 4-bit tensors,
-and there is nothing to add them to without dequantizing a layer per step. Merge the adapter
-into the bf16 checkpoint and convert *that* — one model directory per voice, and point
+**LoRA voices under MLX.** Under torch — the published checkpoint — they load as they do on
+Linux: the demo offers the published [`kova-ai/kova-tts-1-voices`](https://huggingface.co/kova-ai/kova-tts-1-voices)
+by default, and everything else reads `KOVA_LORA_DIR`. Under MLX they do not: a peft adapter is bf16 matrices, the MLX model's projections are 4-bit
+tensors, and there is nothing to add them to without dequantizing a layer per step. Merge the
+adapter into the bf16 checkpoint and convert *that* — one model directory per voice, and point
 `KOVA_MODEL_PATH` at the one you want. `--voice` raises a message saying so rather than
 producing the base voice quietly.
 

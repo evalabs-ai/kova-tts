@@ -90,7 +90,8 @@ and every upload fails with a permission error.
   requests, so the demo serializes them and tells a second visitor to wait rather than showing
   them a traceback.
 - **On a CPU it is very slow.** The banner says so; a CUDA device is what this is for. On Apple
-  Silicon it runs a little under real time, and the banner says which backend it picked.
+  Silicon the published checkpoint runs under torch on Metal, well below real time, so expect
+  audio to stall as it plays; the banner says which backend it picked.
 - Long text is generated chunk by chunk — a few short sentences at a time — with the previous
   chunk carried into the next prompt, which is why the joins hold together. The demo accepts
   about 1200 characters at a time; use the Python API for anything longer.
