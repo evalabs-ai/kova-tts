@@ -35,16 +35,17 @@ machine is running (device, backend, installed voices) and links to the endpoint
 anything that needs fixing — a CPU-only machine, missing weights — shows as a banner above the
 box.
 
-**The prompt box.** Type, or press **Random** for one of the example prompts. The toolbar
-underneath holds the character count, the voice picker, **New voice**, the settings button and
-**Speak**. The voice is chosen in two steps: a source, then a voice within it —
+**The prompt box.** Type, or press **Random** for one of the example prompts. The character
+count sits beside it. The toolbar underneath holds a four-way switch for the voice source, the
+settings button and **Speak**, and keeps that shape whatever is picked. The voice is chosen in two
+steps: a source on the switch, then a voice within it on the line below —
 
 | Source | What it is |
 |---|---|
 | Base model | the checkpoint with no adapter and no reference |
-| LoRA | an adapter from `--lora-dir` / `KOVA_LORA_DIR` (shown only when there are some) |
-| Zero-shot preset | one of the bundled reference clips, previewed under the toolbar with its transcript; encoded on first use |
-| Your recording | anything cloned this session |
+| Zero-shot preset | one of the bundled reference clips, previewed under the toolbar with its transcript; encoded on first use (shown when there are presets) |
+| Your recording | anything cloned this session; with nothing cloned yet, picking it opens the cloning panel |
+| Professional cloning | a LoRA adapter from `--lora-dir` / `KOVA_LORA_DIR`; with none installed, picking it says how to add one |
 
  Sound starts after the first ~390 ms frame is decoded and runs continuously to the end
 of the utterance, while the later sentences are still being generated. While it does, Speak
@@ -62,9 +63,11 @@ token budget. They start at the tuned preset, and switching voice resets them to
 voice calls for — the cloning preset differs only in giving the model a larger token budget.
 "Reset to preset" puts them back. You should not have to open this panel at all.
 
-**New voice** opens the cloning panel inside the prompt box. It shows a short passage to read
-aloud, with the transcript already filled in to match it — record yourself reading it, name it,
-press Clone, and there is nothing to type and nothing to transcribe. "Another" rotates through
+**Cloning** happens in a panel inside the prompt box. Picking **Your recording** opens it while
+nothing has been cloned; after that, **New recording** beside the voice picker opens it again.
+It shows a short passage to read aloud, with the transcript already filled in to match it —
+record yourself reading it, name it, press Clone, and there is nothing to type and nothing to
+transcribe. "Another" rotates through
 the passages, and leaves a transcript you typed yourself alone. When the clone is ready the panel
 closes and the new voice is already selected.
 

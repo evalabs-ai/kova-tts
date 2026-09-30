@@ -213,8 +213,8 @@ def test_build_ui_constructs_without_launching(demo: Any) -> None:
     by_id = {block.elem_id: block for block in ui.blocks.values() if block.elem_id}
     assert [choice[1] for choice in by_id["kova-source"].choices] == [
         demo.SOURCE_BASE,
-        demo.SOURCE_LORA,
         demo.SOURCE_CLONE,
+        demo.SOURCE_LORA,
     ]
     assert [choice[1] for choice in by_id["kova-voice"].choices] == [demo.BASE_VOICE]
     # Building the page must not generate anything -- cached examples would do exactly that,
@@ -405,9 +405,15 @@ def test_every_source_offers_its_own_voices(
 
     assert session.sources() == [
         demo.SOURCE_BASE,
-        demo.SOURCE_LORA,
         demo.SOURCE_PRESET,
         demo.SOURCE_CLONE,
+        demo.SOURCE_LORA,
+    ]
+    # Professional cloning stays on the switch with nothing installed, so it never changes shape.
+    assert demo.DemoSession(tts=FakeTTS(())).sources() == [
+        demo.SOURCE_BASE,
+        demo.SOURCE_CLONE,
+        demo.SOURCE_LORA,
     ]
     assert session.choices(demo.SOURCE_BASE) == [(demo.BASE_LABEL, demo.BASE_VOICE)]
     assert [v for _, v in session.choices(demo.SOURCE_LORA)] == ["alto"]

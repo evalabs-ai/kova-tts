@@ -217,7 +217,7 @@ body, gradio-app, .gradio-container, .main, .contain {{
 #kova-meta > *, #kova-toolbar > * {{
   flex: none !important; min-width: 0 !important; width: auto !important;
 }}
-#kova-toolbar > #kova-new-voice {{ margin-left: auto; }}
+#kova-toolbar > #kova-settings {{ margin-left: auto; }}
 #kova-count {{ font-size: 13px; color: var(--kova-muted); font-variant-numeric: tabular-nums; }}
 #kova-count[data-over] {{ color: var(--kova-red); }}
 
@@ -261,7 +261,7 @@ body, gradio-app, .gradio-container, .main, .contain {{
 }}
 #kova-main button.kova-btn.kova-no-icon::before {{ display: none; }}
 #kova-random {{ --icon: {_SHUFFLE}; }}
-#kova-new-voice {{ --icon: {_MIC_PLUS}; }}
+#kova-record-more {{ --icon: {_MIC_PLUS}; }}
 #kova-settings {{ --icon: {_SLIDERS}; }}
 #kova-speak {{ --icon: {_PLAY}; }}
 #kova-stop {{ --icon: {_STOP}; }}
@@ -273,22 +273,60 @@ body, gradio-app, .gradio-container, .main, .contain {{
 body[data-kova-busy] #kova-speak,
 body:not([data-kova-busy]) #kova-stop {{ display: none !important; }}
 
-#kova-source {{ width: 170px !important; }}
-#kova-voice {{ width: 250px !important; }}
-#kova-source .wrap, #kova-voice .wrap {{
+/* The voice source: a segmented switch, one pill per source, the picked one raised.
+   Gradio centres a container-less block with auto margins; in the toolbar those would split
+   the free space with the settings button's and float the switch off the left edge. */
+#kova-source {{ margin: 0 !important; padding: 0 !important; }}
+#kova-source .wrap {{
+  display: flex; flex-wrap: nowrap; gap: 2px !important; height: 44px; box-sizing: border-box;
+  padding: 3px; border: 1px solid var(--kova-line); border-radius: 999px;
+  background: var(--kova-sunken);
+}}
+#kova-source label {{
+  display: flex; align-items: center; justify-content: center; position: relative;
+  margin: 0 !important; padding: 0 14px !important; border: none !important;
+  border-radius: 999px !important; background: transparent !important; box-shadow: none !important;
+  font-family: var(--kova-sans); font-size: 13px; font-weight: 500; white-space: nowrap;
+  color: var(--kova-muted) !important; cursor: pointer; transition: background 150ms, color 150ms;
+}}
+#kova-source label:hover {{ color: var(--kova-ink) !important; }}
+#kova-source label.selected {{
+  background: var(--kova-surface) !important; color: var(--kova-ink) !important;
+  box-shadow: 0 1px 3px rgba(42, 40, 38, 0.14) !important;
+}}
+/* The radio itself stays in the page for keyboards and screen readers, just not on it. */
+#kova-source input[type=radio] {{
+  position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0;
+}}
+#kova-source label:has(input:focus-visible) {{ outline: 2px solid var(--kova-teal); }}
+#kova-source label span {{ margin: 0 !important; }}
+
+#kova-voice {{ width: 320px !important; margin: 0 !important; }}
+#kova-voice .wrap {{
   height: 44px; min-height: 0; box-sizing: border-box; padding: 0 8px 0 14px;
   border: 1px solid var(--kova-line) !important; border-radius: 999px !important;
   background: var(--kova-surface) !important;
 }}
-#kova-source .wrap-inner, #kova-voice .wrap-inner {{ padding: 0 !important; height: 100%; }}
-#kova-source input, #kova-voice input {{
-  text-overflow: ellipsis;
+#kova-voice .wrap-inner {{ padding: 0 !important; height: 100%; }}
+/* The arrow is laid over the input's right end: keep the text, and its ellipsis, clear of it. */
+#kova-voice .icon-wrap {{ right: 0 !important; }}
+#kova-voice input {{
+  text-overflow: ellipsis; padding-right: 26px !important;
   background: transparent !important; font-family: var(--kova-sans); font-size: 14px;
   color: var(--kova-ink);
 }}
 
-/* Under the toolbar: a preset's reference clip, or the nudge to record a first voice. */
-#kova-preview, #kova-empty-clones {{
+/* Under the toolbar: which voice within the source. Its own line, so the toolbar above keeps
+   one shape whatever the source. */
+#kova-voice-row {{
+  border-top: 1px solid var(--kova-line-soft) !important; padding: 12px 14px 12px 22px !important;
+  gap: 14px !important; align-items: center; flex-wrap: nowrap;
+}}
+#kova-voice-row > * {{ flex: none !important; min-width: 0 !important; width: auto !important; }}
+.kova-row-label {{ font-size: 13px; font-weight: 500; color: var(--kova-muted); }}
+
+/* Then a preset's reference clip, or the nudge to record a first voice. */
+#kova-preview, #kova-empty-clones, #kova-empty-loras {{
   border-top: 1px solid var(--kova-line-soft) !important; padding: 12px 22px 14px !important;
   gap: 16px !important; align-items: center;
 }}
@@ -344,6 +382,9 @@ body:not([data-kova-busy]) #kova-stop {{ display: none !important; }}
   background: var(--kova-surface) !important; border: 1px solid var(--kova-line) !important;
   border-radius: 20px !important; padding: 20px 22px !important; gap: 16px !important;
 }}
+/* Gradio packs each row's sliders into one gapless .form; without room between them, the left
+   slider's max runs into the right one's name, and stacked on a phone they touch. */
+#kova-settings-panel .form {{ gap: 16px 40px !important; }}
 #kova-settings-panel input[type=range] {{ accent-color: var(--kova-teal); }}
 #kova-settings-panel label span, #kova-settings-panel .info {{ font-size: 13px; }}
 #kova-reset {{ margin-left: auto; }}
@@ -413,14 +454,21 @@ body:not([data-kova-busy]) #kova-stop {{ display: none !important; }}
   #kova-text textarea {{ padding: 16px 16px 8px !important; font-size: 17px !important; }}
   #kova-meta {{ padding: 0 16px 4px 6px; }}
   #kova-toolbar {{ padding: 12px; }}
-  #kova-toolbar > #kova-source, #kova-toolbar > #kova-voice {{
-    order: 3; flex: 1 1 100% !important; width: 100% !important;
+  /* Four pills do not fit a phone's width on one line: two by two. */
+  #kova-toolbar > #kova-source {{ flex: 1 1 100% !important; width: 100% !important; }}
+  #kova-source .wrap {{
+    display: grid; grid-template-columns: 1fr 1fr; height: auto; border-radius: 22px;
   }}
-  #kova-preview, #kova-empty-clones {{ flex-direction: column; align-items: stretch; }}
-  #kova-preset-audio {{ flex: none !important; }}
-  #kova-new-voice, #kova-settings {{ order: 4; }}
-  #kova-toolbar > #kova-new-voice {{ margin-left: 0; }}
-  #kova-speak, #kova-stop {{ order: 5; margin-left: auto; }}
+  #kova-source label {{ height: 36px; padding: 0 8px !important; border-radius: 18px !important; }}
+  #kova-voice-row {{ padding: 12px 12px 12px 16px !important; }}
+  #kova-preview, #kova-empty-clones, #kova-empty-loras {{
+    flex-direction: column; align-items: stretch;
+  }}
+  #kova-preset-audio, #kova-preset-text {{ flex: none !important; }}
+  #kova-voice-row {{ flex-wrap: wrap; }}
+  #kova-voice-row > #kova-voice {{
+    flex: 1 1 0 !important; width: auto !important; min-width: 200px !important;
+  }}
   #kova-clone {{ padding: 16px !important; }}
   #kova-clone-row {{ flex-direction: column; }}
   #kova-player {{ padding: 14px 16px; }}

@@ -50,11 +50,12 @@ PRESET_MANIFEST = "metadata.csv"
 _AUDIO_SUFFIXES = (".flac", ".wav", ".ogg", ".opus", ".mp3")
 
 #: Where a voice comes from. The prompt box picks one of these first, then a voice within it.
+#: In order of the effort behind the voice; professional cloning is a trained LoRA adapter.
 SOURCE_BASE = "Base model"
-SOURCE_LORA = "LoRA"
 SOURCE_PRESET = "Zero-shot preset"
 SOURCE_CLONE = "Your recording"
-SOURCES = (SOURCE_BASE, SOURCE_LORA, SOURCE_PRESET, SOURCE_CLONE)
+SOURCE_LORA = "Professional cloning"
+SOURCES = (SOURCE_BASE, SOURCE_PRESET, SOURCE_CLONE, SOURCE_LORA)
 
 
 def load_presets(directory: str | os.PathLike[str] | None) -> dict[str, tuple[Path, str]]:
@@ -187,29 +188,26 @@ class DemoSession:
     def choices(self, source: str | None = None) -> list[tuple[str, str]]:
         """``(label, value)`` pairs for the voice picker.
 
-        With no `source`, every voice: base, LoRAs, presets, then clones. With one of
+        With no `source`, every voice: base, presets, clones, then LoRAs. With one of
         :data:`SOURCES`, only that kind -- which is how the prompt box fills its picker.
         """
         groups = {
             SOURCE_BASE: [(BASE_LABEL, BASE_VOICE)],
-            SOURCE_LORA: [(name, name) for name in self.voices()],
             SOURCE_PRESET: [(self.preset_label(pid), PRESET_PREFIX + pid) for pid in self._presets],
             SOURCE_CLONE: [(f"{name} (cloned)", name) for name in sorted(self._cloned)],
+            SOURCE_LORA: [(name, name) for name in self.voices()],
         }
         if source is not None:
             return groups[source]
         return [pair for group in groups.values() for pair in group]
 
     def sources(self) -> list[str]:
-        """The voice sources worth offering here. Cloning is always possible; the rest need
-        something installed."""
-        return [
-            s
-            for s in SOURCES
-            if s in (SOURCE_BASE, SOURCE_CLONE)
-            or (s == SOURCE_LORA and self.voices())
-            or (s == SOURCE_PRESET and self._presets)
-        ]
+        """The voice sources worth offering here: all of them, bar presets when none are set up.
+
+        Cloning is always possible, and professional cloning stays on offer with no adapters
+        installed -- picking it says how to add one.
+        """
+        return [s for s in SOURCES if s != SOURCE_PRESET or self._presets]
 
     def source_of(self, name: str | None) -> str:
         """Which of :data:`SOURCES` a picker value belongs to."""

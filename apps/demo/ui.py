@@ -1,8 +1,10 @@
 """The page itself: one prompt box, its panels and callbacks, and the player wired to the stream.
 
-Everything happens from the prompt box. Random fills it with an example, the voice picker and
-New voice sit in its toolbar -- New voice opens the cloning panel right beneath the text -- and
-the settings button opens the sampling controls. There are no tabs to go looking in.
+Everything happens from the prompt box. Random fills it with an example, and the toolbar's switch
+picks where the voice comes from -- the voice within that source on a line of its own below it,
+so the toolbar keeps one shape. Picking "Your recording" with nothing recorded opens the cloning
+panel right beneath the text, and the settings button opens the sampling controls. There are no
+tabs to go looking in.
 
 Speaking never reaches Python. Gradio's own streaming audio component would take the frames
 :meth:`KovaTTS.stream` yields, re-encode each one to AAC with ffmpeg and serve them as HLS
@@ -40,7 +42,7 @@ from content import (
     TRANSCRIPT_HELP,
     header_html,
 )
-from session import BASE_VOICE, SOURCE_BASE, SOURCE_CLONE, DemoSession, load_engine
+from session import BASE_VOICE, SOURCE_BASE, SOURCE_CLONE, SOURCE_LORA, DemoSession, load_engine
 from streaming import MAX_CHARS, STREAM_PATH
 
 #: Classes for the toolbar buttons that open a panel, closed and open.
@@ -174,27 +176,13 @@ def build_ui(
                     )
                 with gr.Row(elem_id="kova-toolbar"):
                     # The voice is picked in two steps: where it comes from, then which one.
-                    source = gr.Dropdown(
+                    source = gr.Radio(
                         choices=session.sources(),
                         value=SOURCE_BASE,
                         show_label=False,
                         container=False,
                         label="Voice source",
                         elem_id="kova-source",
-                    )
-                    # The value the player sends; its choices follow the source. Hidden for
-                    # the base model, which has exactly one voice.
-                    voice = gr.Dropdown(
-                        choices=session.choices(SOURCE_BASE),
-                        value=BASE_VOICE,
-                        show_label=False,
-                        container=False,
-                        label="Voice",
-                        visible=False,
-                        elem_id="kova-voice",
-                    )
-                    new_voice = gr.Button(
-                        "New voice", elem_id="kova-new-voice", elem_classes=_TOGGLE
                     )
                     settings = gr.Button(
                         "Settings",
@@ -208,6 +196,27 @@ def build_ui(
                         "Stop", elem_id="kova-stop", elem_classes=["kova-btn", "kova-dark"]
                     )
 
+                # Which voice within the source, on a line of its own so the toolbar keeps its
+                # shape whatever the source. Hidden for the base model, which has exactly one.
+                with gr.Row(visible=False, elem_id="kova-voice-row") as voice_row:
+                    gr.HTML('<span class="kova-row-label">voice</span>', padding=False)
+                    # The value the player sends; its choices follow the source.
+                    voice = gr.Dropdown(
+                        choices=session.choices(SOURCE_BASE),
+                        value=BASE_VOICE,
+                        show_label=False,
+                        container=False,
+                        label="Voice",
+                        elem_id="kova-voice",
+                    )
+                    # Only for "Your recording": the way to clone another once there are some.
+                    record_more = gr.Button(
+                        "New recording",
+                        visible=False,
+                        elem_id="kova-record-more",
+                        elem_classes=["kova-btn", "kova-plain"],
+                    )
+
                 # What the picked voice sounds like, for a zero-shot preset: its reference clip
                 # and the transcript it is encoded from.
                 with gr.Row(visible=False, elem_id="kova-preview") as preview_row:
@@ -217,7 +226,15 @@ def build_ui(
                         elem_id="kova-preset-audio",
                     )
                     preset_text = gr.Markdown(elem_id="kova-preset-text")
-                # "Your recording" before anything has been recorded.
+                # "Professional cloning" with no adapters installed.
+                with gr.Row(visible=False, elem_id="kova-empty-loras") as lora_hint:
+                    gr.HTML(
+                        '<p class="kova-hint">No professional voices installed. Train a LoRA '
+                        "adapter on your recordings, then point <code>--lora-dir</code> or "
+                        "<code>KOVA_LORA_DIR</code> at it.</p>",
+                        padding=False,
+                    )
+                # "Your recording" with nothing recorded, once the cloning panel is closed.
                 with gr.Row(visible=False, elem_id="kova-empty-clones") as clone_hint:
                     gr.HTML(
                         '<p class="kova-hint">No recordings yet — clone one and it will '
@@ -348,7 +365,6 @@ def build_ui(
 
             gr.HTML(PLAYER_HTML, padding=False)
 
-        clone_open = gr.State(False)
         settings_open = gr.State(False)
 
         # ----------------------------------------------------------------------- behaviour
@@ -374,18 +390,22 @@ def build_ui(
             )
 
         def picker_for(chosen_source: str, value: str | None = None) -> tuple[Any, ...]:
-            """The voice picker and the empty-recordings hint, for one voice source."""
+            """Everything under the toolbar that follows the voice source.
+
+            The voice picker and its row, New recording, the two empty-source hints, and the
+            cloning panel -- which "Your recording" opens straight away while there is nothing
+            to pick, and every other source closes.
+            """
             options = session.choices(chosen_source)
             values = [v for _, v in options]
             selected = value if value in values else (values[0] if values else None)
-            empty_clones = chosen_source == SOURCE_CLONE and not options
             return (
-                gr.update(
-                    choices=options,
-                    value=selected,
-                    visible=chosen_source != SOURCE_BASE and bool(options),
-                ),
-                gr.Row(visible=empty_clones),
+                gr.update(choices=options, value=selected),
+                gr.Row(visible=chosen_source != SOURCE_BASE and bool(options)),
+                gr.Button(visible=chosen_source == SOURCE_CLONE),
+                gr.Row(visible=chosen_source == SOURCE_LORA and not options),
+                gr.Row(visible=False),
+                gr.Column(visible=chosen_source == SOURCE_CLONE and not options),
             )
 
         def on_random(current: str) -> str:
@@ -393,37 +413,31 @@ def build_ui(
             pool = [prompt for prompt in EXAMPLES if prompt != (current or "").strip()]
             return random.choice(pool or EXAMPLES)
 
-        def toggle_panel(extra: list[str]) -> Any:
-            """A click handler that opens a panel if it is closed, and closes it if it is open."""
+        def toggle_settings(is_open: bool) -> tuple[bool, Any, Any]:
+            """Open the settings panel if it is closed, and close it if it is open."""
+            now = not is_open
+            classes = [*(_TOGGLE_ON if now else _TOGGLE), "kova-icon-only"]
+            return now, gr.Column(visible=now), gr.Button(elem_classes=classes)
 
-            def toggle(is_open: bool) -> tuple[bool, Any, Any]:
-                now = not is_open
-                classes = [*(_TOGGLE_ON if now else _TOGGLE), *extra]
-                return now, gr.Column(visible=now), gr.Button(elem_classes=classes)
+        def close_clone_panel(chosen_source: str) -> tuple[Any, Any]:
+            """Close the cloning panel, leaving the way back if nothing has been recorded."""
+            empty = chosen_source == SOURCE_CLONE and not session.choices(SOURCE_CLONE)
+            return gr.Column(visible=False), gr.Row(visible=empty)
 
-            return toggle
-
-        def close_clone_panel() -> tuple[bool, Any, Any]:
-            return False, gr.Column(visible=False), gr.Button(elem_classes=_TOGGLE)
-
-        def open_clone_panel() -> tuple[bool, Any, Any]:
-            return True, gr.Column(visible=True), gr.Button(elem_classes=_TOGGLE_ON)
+        def open_clone_panel() -> tuple[Any, Any]:
+            return gr.Column(visible=True), gr.Row(visible=False)
 
         def on_clone(*values: Any) -> tuple[Any, ...]:
             message, cloned = session.clone_voice(*values)
             if cloned is None:
                 # The panel stays open, with the reason in it, for another try.
-                unchanged = (gr.update(),) * 4
-                return message, *unchanged, True, gr.update(), gr.update()
+                return message, *(gr.update(),) * 8
             # Land the user where the new voice is usable: panel closed, voice already selected.
             return (
                 message,
                 gr.update(value=SOURCE_CLONE),
                 *picker_for(SOURCE_CLONE, cloned),
                 gr.update(),
-                False,
-                gr.Column(visible=False),
-                gr.Button(elem_classes=_TOGGLE),
             )
 
         def on_reference(path: str | None) -> tuple[Any, Any, Any]:
@@ -458,23 +472,19 @@ def build_ui(
         # a clone in progress.
         instant: dict[str, Any] = {"queue": False, "show_progress": "hidden"}
         random_button.click(on_random, text, text, **instant)
-        new_voice.click(
-            toggle_panel([]), clone_open, [clone_open, clone_panel, new_voice], **instant
-        )
-        close_clone.click(close_clone_panel, None, [clone_open, clone_panel, new_voice], **instant)
+        for opener in (go_clone, record_more):
+            opener.click(open_clone_panel, None, [clone_panel, clone_hint], **instant)
+        close_clone.click(close_clone_panel, source, [clone_panel, clone_hint], **instant)
         settings.click(
-            toggle_panel(["kova-icon-only"]),
-            settings_open,
-            [settings_open, settings_panel, settings],
-            **instant,
+            toggle_settings, settings_open, [settings_open, settings_panel, settings], **instant
         )
 
         sliders = [temperature, top_p, top_k, repetition_penalty, max_tokens]
         voice.change(on_voice_change, voice, [*sliders, preview_row, preset_preview, preset_text])
         # Only a person picking changes the source; on_clone sets it programmatically and fills
         # the picker itself, which .input (unlike .change) leaves alone.
-        source.input(picker_for, source, [voice, clone_hint], **instant)
-        go_clone.click(open_clone_panel, None, [clone_open, clone_panel, new_voice], **instant)
+        by_source = [voice, voice_row, record_more, lora_hint, clone_hint, clone_panel]
+        source.input(picker_for, source, by_source, **instant)
         reset.click(preset_values, voice, sliders, **instant)
         another_script.click(
             on_another_script,
@@ -488,12 +498,8 @@ def build_ui(
             [
                 clone_status,
                 source,
-                voice,
-                clone_hint,
+                *by_source,
                 transcript_box,
-                clone_open,
-                clone_panel,
-                new_voice,
             ],
             concurrency_limit=1,
         )

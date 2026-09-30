@@ -72,9 +72,10 @@ generated — about a quarter of a second in on a warm CUDA box, not after the c
 `--preload` loads the weights at startup so the first press pays none of that; without it the
 first generation takes a few seconds longer and every one after is the same.
 
-One prompt box does everything. **Random** fills it with an example, the voice picker sits in its
-toolbar, and the sampling controls are behind a settings button you should not need to press.
-**New voice** opens the cloning panel right under the text: a short passage to read aloud with
+One prompt box does everything. **Random** fills it with an example, a switch under it picks the
+voice source — base model, zero-shot preset, your recording or professional cloning (a LoRA) —
+and the sampling controls are behind a settings button you should not need to press. **Your
+recording** opens the cloning panel right under the text: a short passage to read aloud with
 the transcript already filled in — record yourself reading it, press Clone, and the new voice is
 selected. Bring your own recording instead if you prefer; it is transcribed for you to check.
 
