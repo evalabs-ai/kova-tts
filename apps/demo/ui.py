@@ -279,17 +279,22 @@ def build_ui(
                                 interactive=False,
                                 elem_id="kova-script",
                             )
-                        with gr.Column(elem_id="kova-record-card"):
-                            reference = gr.Audio(
-                                sources=["microphone", "upload"],
-                                type="filepath",
-                                label="Your recording",
-                                elem_id="kova-reference",
-                            )
-                            with gr.Row(equal_height=True):
+                        # The recording in its card, and naming it on a line of its own beneath.
+                        with gr.Column(elem_id="kova-record-side"):
+                            with gr.Column(elem_id="kova-record-card"):
+                                reference = gr.Audio(
+                                    sources=["microphone", "upload"],
+                                    type="filepath",
+                                    label="Your recording",
+                                    elem_id="kova-reference",
+                                )
+                            with gr.Row(equal_height=True, elem_id="kova-name-row"):
                                 clone_name = gr.Textbox(
                                     label="Name",
-                                    placeholder="My voice",
+                                    show_label=False,
+                                    container=False,
+                                    placeholder="Name this voice",
+                                    max_lines=1,
                                     elem_id="kova-clone-name",
                                 )
                                 clone_button = gr.Button(

@@ -98,6 +98,10 @@ _MIC_PLUS = _mask(
     "<rect x='7' y='3' width='6' height='11' rx='3'/>"
     "<path d='M3.5 11a6.5 6.5 0 0 0 11 4.7M10 18v3M19 5v6M16 8h6'/>"
 )
+_MIC = _mask(
+    "<rect x='9' y='3' width='6' height='11' rx='3'/><path d='M5.5 11a6.5 6.5 0 0 0 13 0M12 18v3'/>"
+)
+_SQUARE = _mask("<rect x='4' y='4' width='16' height='16' rx='3' fill='black'/>")
 _SLIDERS = _mask(
     "<path d='M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12'/><circle cx='16' cy='6' r='2'/>"
     "<circle cx='10' cy='12' r='2'/><circle cx='18' cy='18' r='2'/>"
@@ -379,10 +383,88 @@ body, gradio-app, .gradio-container, .main, .contain {{
   background: var(--kova-surface) !important; border: 1px solid var(--kova-line) !important;
   border-radius: 14px !important; padding: 14px 16px !important; gap: 10px !important;
 }}
+/* The script card stretches to the whole right-hand side: the recording card and the name row. */
+#kova-record-side {{ gap: 12px !important; }}
+#kova-record-side > #kova-record-card {{ flex: 1 1 auto !important; }}
+#kova-name-row {{ gap: 10px !important; align-items: center; flex-wrap: nowrap; }}
+#kova-name-row > #kova-clone-name {{ flex: 1 1 0 !important; min-width: 0 !important; }}
 /* Nothing to clear before anything is recorded: Gradio shows its Clear button regardless. A
    clip brings a download link into the same corner, which is what tells the two states apart. */
 #kova-reference .icon-button-wrapper:not(:has([data-testid="download-link"])) {{
   display: none !important;
+}}
+/* One stage for every state -- ready to record, recording, recorded, or waiting for a file -- so
+   the card keeps its size as it moves between them: the body takes whatever height the tallest
+   state needs, centred, with the source switch pinned beneath. Gradio clips the block, which cut
+   the switch's bottom edge off; nothing here needs clipping. */
+#kova-reference {{ overflow: visible !important; flex: none !important; }}
+/* Upload mode floats the "Your recording" label over the drop area; keep it above, as elsewhere. */
+#kova-reference > label.float {{ position: static !important; }}
+#kova-reference .audio-container {{
+  display: flex; flex-direction: column; min-height: 232px; gap: 10px;
+}}
+#kova-reference .audio-container > .component-wrapper,
+#kova-reference .audio-container > button.center {{
+  flex: 1 1 auto; display: flex; flex-direction: column; justify-content: center;
+  height: auto !important; min-height: 0 !important;
+}}
+#kova-reference .audio-container > button.center > .wrap {{
+  min-height: 0 !important; height: auto !important;
+}}
+#kova-reference .audio-container > button.center {{ color: var(--kova-muted); font-size: 14px; }}
+/* Recording uses the browser's default microphone: no device picker. */
+#kova-reference .mic-select {{ display: none !important; }}
+#kova-reference .controls:has(.record-button) {{ justify-content: center !important; }}
+/* Record, Stop, Pause and Resume as the page's own pills, not Gradio's buttons with a teal dot.
+   Gradio shows and hides them itself, so nothing here sets their display -- which is also why
+   Resume, not a flex box, stays text alone. Pausing swaps Stop for a differently-classed twin,
+   which looks exactly the same here. */
+#kova-reference .record-button, #kova-reference .stop-button,
+#kova-reference .stop-button-paused, #kova-reference .pause-button,
+#kova-reference .resume-button {{
+  align-items: center; justify-content: center; gap: 8px; width: auto; min-width: 0;
+  height: 40px; padding: 0 18px !important; border-radius: 999px !important;
+  border: 1px solid var(--kova-line) !important; background: var(--kova-surface) !important;
+  font-family: var(--kova-sans); font-size: 14px; font-weight: 500; color: var(--kova-ink);
+}}
+#kova-reference .record-button:hover, #kova-reference .stop-button:hover,
+#kova-reference .stop-button-paused:hover, #kova-reference .pause-button:hover,
+#kova-reference .resume-button:hover {{ background: #ede6dc !important; }}
+#kova-reference .pause-button {{ width: 40px; padding: 0 !important; color: var(--kova-ink-2); }}
+/* Centred on its own: the pause button is not a flex box, so the icon would sit at the left. */
+#kova-reference .pause-button svg {{
+  display: block; width: 14px; height: 14px; margin: 0 auto; fill: currentColor;
+}}
+#kova-reference .record-button::before, #kova-reference .stop-button::before,
+#kova-reference .stop-button-paused::before {{
+  flex: none; width: 16px !important; height: 16px !important; margin: 0 !important;
+  border-radius: 0 !important; background: currentColor !important; animation: none !important;
+  -webkit-mask: {_MIC} center / contain no-repeat; mask: {_MIC} center / contain no-repeat;
+}}
+#kova-reference .stop-button, #kova-reference .stop-button-paused {{
+  color: var(--kova-red); border-color: var(--kova-red) !important;
+}}
+#kova-reference .stop-button::before, #kova-reference .stop-button-paused::before {{
+  width: 12px !important; height: 12px !important;
+  -webkit-mask-image: {_SQUARE}; mask-image: {_SQUARE};
+}}
+/* Gradio's two bare source icons become a labelled switch, in the voice switch's look, so both
+   ways in -- a file or the microphone -- are plain from the start. */
+#kova-reference .source-selection {{
+  display: flex !important; flex: none; gap: 2px; width: fit-content; margin: 0 auto; padding: 3px;
+  border: 1px solid var(--kova-line); border-radius: 999px; background: var(--kova-sunken);
+}}
+#kova-reference .source-selection button {{
+  display: flex; align-items: center; gap: 6px; width: auto !important; height: 32px;
+  margin: 0; padding: 0 12px; border-radius: 999px; background: transparent;
+  font-family: var(--kova-sans); font-size: 13px; font-weight: 500; color: var(--kova-muted);
+}}
+#kova-reference .source-selection button::after {{ content: attr(aria-label); }}
+#kova-reference .source-selection button svg {{ width: 14px; height: 14px; }}
+#kova-reference .source-selection button:hover {{ color: var(--kova-ink); }}
+#kova-reference .source-selection button.selected {{
+  background: var(--kova-surface); color: var(--kova-ink);
+  box-shadow: 0 1px 3px rgba(42, 40, 38, 0.14);
 }}
 .kova-eyebrow {{
   font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
@@ -393,11 +475,15 @@ body, gradio-app, .gradio-container, .main, .contain {{
   padding: 0 !important; font-family: var(--kova-sans) !important; font-size: 16px !important;
   line-height: 1.55 !important; color: var(--kova-ink) !important; resize: none;
 }}
-#kova-clone-name input, #kova-transcript textarea {{
+#kova-clone-name input, #kova-clone-name textarea, #kova-transcript textarea {{
   background: #fff !important; border: 1px solid var(--kova-line) !important;
   border-radius: 12px !important; font-family: var(--kova-sans); font-size: 15px;
 }}
-#kova-clone-name input {{ min-height: 44px; }}
+/* The name sits beside Clone as a pill of the same height. */
+#kova-clone-name input, #kova-clone-name textarea {{
+  box-sizing: border-box; height: 44px !important; min-height: 44px; padding: 11px 18px !important;
+  border-radius: 999px !important; resize: none; overflow: hidden; line-height: 20px;
+}}
 #kova-clone-row label span, #kova-transcript-box span {{
   color: var(--kova-ink-2); font-size: 13px;
 }}
