@@ -47,6 +47,10 @@ from content import (
 from session import BASE_VOICE, SOURCE_BASE, SOURCE_CLONE, SOURCE_LORA, DemoSession, load_engine
 from streaming import MAX_CHARS, STREAM_PATH
 
+#: Both audio players' waveforms, in the page's palette rather than Gradio's lavender: warm
+#: bars, teal for what has been heard.
+_WAVEFORM = gr.WaveformOptions(waveform_color="#c4bdb0", waveform_progress_color="#0f8f86")
+
 #: Classes for the toolbar buttons that open a panel, closed and open.
 _TOGGLE = ["kova-btn"]
 _TOGGLE_ON = ["kova-btn", "kova-on"]
@@ -229,6 +233,7 @@ def build_ui(
                     preset_preview = gr.Audio(
                         label="Reference clip",
                         interactive=False,
+                        waveform_options=_WAVEFORM,
                         elem_id="kova-preset-audio",
                     )
                     preset_text = gr.Markdown(elem_id="kova-preset-text")
@@ -317,6 +322,7 @@ def build_ui(
                                     sources=["microphone"],
                                     type="filepath",
                                     label="Your recording",
+                                    waveform_options=_WAVEFORM,
                                     elem_id="kova-reference",
                                 )
                             with gr.Row(equal_height=True, elem_id="kova-name-row"):

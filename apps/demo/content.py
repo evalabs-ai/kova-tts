@@ -417,6 +417,32 @@ body, gradio-app, .gradio-container, .main, .contain {{
   min-height: 0 !important; height: auto !important;
 }}
 #kova-reference .audio-container > button.center {{ color: var(--kova-muted); font-size: 14px; }}
+/* While recording, wavesurfer's cursor sits at the start and the left-hand clock at 0:00 for the
+   whole take, so it reads as frozen. Both go, and the running length becomes a recording light:
+   a pulsing red dot and the time, centred. It holds still while paused. */
+#kova-reference .microphone > div::part(cursor) {{ display: none; }}
+/* On playback the cursor does move; it is the teal of the heard part of the waveform. */
+#kova-reference div::part(cursor), #kova-preset-audio div::part(cursor) {{
+  background: var(--kova-teal);
+}}
+#kova-reference .component-wrapper:has(.microphone) .timestamps {{ justify-content: center; }}
+#kova-reference .component-wrapper:has(.microphone) .timestamps .time {{ display: none; }}
+#kova-reference .component-wrapper:has(.microphone) .timestamps .duration {{
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--kova-mono); font-size: 14px; color: var(--kova-ink);
+}}
+#kova-reference .component-wrapper:has(.microphone) .timestamps .duration::before {{
+  content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--kova-red);
+  animation: kova-recording 1.2s ease-in-out infinite;
+}}
+/* Paused is when Gradio hides the live Stop -- the paused one is always in the page. */
+#kova-reference .component-wrapper:has(.stop-button[style*="none"]) .timestamps .duration::before {{
+  animation: none; opacity: 0.35;
+}}
+@keyframes kova-recording {{ 50% {{ opacity: 0.2; }} }}
+@media (prefers-reduced-motion: reduce) {{
+  #kova-reference .timestamps .duration::before {{ animation: none !important; }}
+}}
 /* Recording uses the browser's default microphone: no device picker. */
 #kova-reference .mic-select {{ display: none !important; }}
 #kova-reference .controls:has(.record-button) {{ justify-content: center !important; }}
