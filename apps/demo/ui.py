@@ -30,7 +30,7 @@ from content import (
     TAGLINE,
     TITLE,
 )
-from session import BASE_VOICE, DemoSession, load_engine
+from session import BASE_VOICE, SOURCE_BASE, SOURCE_CLONE, DemoSession, load_engine
 from streaming import MAX_CHARS, STREAM_PATH
 
 
@@ -97,12 +97,31 @@ def build_ui(
                             placeholder="Say something...",
                         )
                     with gr.Column(scale=2):
+                        source = gr.Radio(
+                            choices=session.sources(),
+                            value=SOURCE_BASE,
+                            label="Voice source",
+                        )
+                        # The value the player sends; its choices follow the source. Hidden for
+                        # the base model, which has exactly one voice.
                         voice = gr.Dropdown(
-                            choices=session.choices(),
+                            choices=session.choices(SOURCE_BASE),
                             value=BASE_VOICE,
                             label="Voice",
-                            info="LoRA voices installed here, plus anything you clone.",
+                            visible=False,
                         )
+                        preset_preview = gr.Audio(
+                            label="Reference clip",
+                            interactive=False,
+                            visible=False,
+                        )
+                        preset_text = gr.Markdown(visible=False)
+                        clone_hint = gr.Markdown(
+                            "No recordings yet. Record or upload one on the **Clone a voice** "
+                            "tab and it will appear here.",
+                            visible=False,
+                        )
+                        go_clone = gr.Button("Record or upload a voice", visible=False)
                         with gr.Row():
                             speak_button = gr.Button("Speak", variant="primary", scale=3)
                             stop_button = gr.Button("Stop", variant="stop", scale=1)
@@ -183,24 +202,50 @@ def build_ui(
 
         # ----------------------------------------------------------------------- behaviour
 
-        def on_voice_change(name: str) -> tuple[float, float, int, float, int]:
+        def on_voice_change(name: str) -> tuple[Any, ...]:
             preset = session.preset(name)
+            ref = session.preset_reference(name)
             return (
                 preset.temperature,
                 preset.top_p,
                 preset.top_k,
                 preset.repetition_penalty,
                 preset.max_tokens,
+                gr.update(value=ref[0] if ref else None, visible=ref is not None),
+                gr.update(
+                    value=f"*Reference transcript:* “{ref[1]}”" if ref else "",
+                    visible=ref is not None,
+                ),
             )
+
+        def picker_for(chosen_source: str, value: str | None = None) -> tuple[Any, ...]:
+            """The picker and the hints under it, for one voice source."""
+            options = session.choices(chosen_source)
+            values = [v for _, v in options]
+            selected = value if value in values else (values[0] if values else None)
+            empty_clones = chosen_source == SOURCE_CLONE and not options
+            return (
+                gr.update(
+                    choices=options,
+                    value=selected,
+                    visible=chosen_source != SOURCE_BASE and bool(options),
+                ),
+                gr.update(visible=empty_clones),
+                gr.update(visible=empty_clones),
+            )
+
+        def on_source_change(chosen_source: str) -> tuple[Any, ...]:
+            return picker_for(chosen_source)
 
         def on_clone(*values: Any) -> tuple[Any, ...]:
             message, cloned = session.clone_voice(*values)
             if cloned is None:
-                return message, gr.update(), gr.update()
+                return (message, gr.update(), gr.update(), gr.update(), gr.update(), gr.update())
             # Land the user where the new voice is usable, already selected.
             return (
                 message,
-                gr.update(choices=session.choices(), value=cloned),
+                gr.update(value=SOURCE_CLONE),
+                *picker_for(SOURCE_CLONE, cloned),
                 gr.Tabs(selected="speak"),
             )
 
@@ -226,8 +271,20 @@ def build_ui(
         voice.change(
             on_voice_change,
             voice,
-            [temperature, top_p, top_k, repetition_penalty, max_tokens],
+            [
+                temperature,
+                top_p,
+                top_k,
+                repetition_penalty,
+                max_tokens,
+                preset_preview,
+                preset_text,
+            ],
         )
+        # Only a person clicking changes the source; on_clone sets it programmatically and
+        # fills the picker itself, which .input (unlike .change) leaves alone.
+        source.input(on_source_change, source, [voice, clone_hint, go_clone])
+        go_clone.click(lambda: gr.Tabs(selected="clone"), None, tabs)
         another_script.click(
             on_another_script,
             [clone_script, clone_transcript],
@@ -236,9 +293,23 @@ def build_ui(
         clone_button.click(
             on_clone,
             [reference, clone_transcript, clone_name],
-            [clone_status, voice, tabs],
+            [clone_status, source, voice, clone_hint, go_clone, tabs],
             concurrency_limit=1,
         )
+
+        def on_reference(path: str | None) -> tuple[Any, Any]:
+            """Transcribe a recording the moment it arrives, so the box holds what was said."""
+            status, heard = session.transcribe_reference(path)
+            return status, (heard if heard is not None else gr.update())
+
+        # Both ways a clip arrives. Not .change: that also fires when the clip is cleared.
+        for arrival in (reference.stop_recording, reference.upload):
+            arrival(
+                on_reference,
+                reference,
+                [clone_status, clone_transcript],
+                show_progress="minimal",
+            )
 
         script = player_js(stream_path=stream_path, model_loaded=session.loaded)
         ui.load(None, None, None, js=script)

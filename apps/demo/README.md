@@ -19,6 +19,7 @@ Then open <http://127.0.0.1:7860>.
 | `--open` | open a browser window on startup |
 | `--preload` | load the weights at startup rather than on the first generation |
 | `--model` / `--codec` / `--wavlm` / `--lora-dir` | override the configured paths |
+| `--zero-shot-dir` | zero-shot presets to offer (default: the bundled [`zero_shot_voices/`](zero_shot_voices/README.md)); `''` for none |
 | `--device` | e.g. `cuda:1` or `mps` |
 | `--backend` | `auto`, `torch` or `mlx`; the default reads it off the checkpoint |
 | `--decode-window` | Codec frames per streamed chunk. Worth raising to 62 on Apple Silicon |
@@ -29,7 +30,17 @@ Hub. If the page says it cannot find the weights, `uv run kova-tts paths` shows 
 
 ## What is on the page
 
-**Speak.** Text box, voice picker, and a Speak button. Sound starts after the first
+**Speak.** Text box, voice picker, and a Speak button. The voice is chosen in two steps: a
+**Voice source**, then a voice within it —
+
+| Source | What it is |
+|---|---|
+| Base model | the checkpoint with no adapter and no reference |
+| LoRA | an adapter from `--lora-dir` / `KOVA_LORA_DIR` (shown only when there are some) |
+| Zero-shot preset | one of the bundled reference clips, previewed with its transcript; encoded on first use |
+| Your recording | anything cloned on the Clone tab this session |
+
+Sound starts after the first
 ~390 ms frame is decoded and runs continuously to the end of the utterance, while the later
 sentences are still being generated. Stop halts it at once and leaves everything ready to go
 again. When the generation finishes, the same audio appears in a normal player below the
@@ -48,11 +59,15 @@ and nothing to transcribe. "Different script" rotates through the passages, and 
 transcript you typed yourself alone. The voice appears in the picker on the Speak tab
 immediately.
 
-Bringing your own recording works too: replace the transcript with exactly what it says, because
-cloning *continues* the reference and a transcript that does not match garbles the output. Left
-empty, the recording is transcribed automatically, which needs the `data` extra
-(`uv sync --extra data`); the demo says so plainly if it is missing. Clones live in memory for
+Any recording or upload is transcribed the moment it arrives — NVIDIA Parakeet TDT
+(`nvidia/parakeet-tdt-0.6b-v3`, via transformers; override with `KOVA_DEMO_ASR_MODEL`) — and the
+transcript box fills in with what was actually said. Check it before cloning: cloning *continues*
+the reference, and a transcript that does not match garbles the output. Clones live in memory for
 the life of the process and are never written to disk.
+
+Uploads land in a per-user `GRADIO_TEMP_DIR` (`$TMPDIR/gradio-<user>`) rather than Gradio's
+shared `/tmp/gradio`: on a machine where another user ran Gradio first, that directory is theirs
+and every upload fails with a permission error.
 
 ## Notes
 

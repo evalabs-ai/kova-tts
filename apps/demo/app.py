@@ -17,21 +17,33 @@ request.
 from __future__ import annotations
 
 import argparse
+import getpass
 import logging
+import os
 import sys
+import tempfile
 import threading
 import webbrowser
 from pathlib import Path
 from typing import Any
 
-import gradio as gr
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+# Gradio stores every upload and microphone recording under GRADIO_TEMP_DIR, which defaults to
+# a /tmp/gradio shared by every user of the machine. Whoever ran Gradio first owns it, and for
+# everyone else each upload fails with PermissionError -- so a recording "never arrives" and
+# cloning says there is nothing to clone. A per-user directory avoids that. Set before Gradio is
+# imported, because it reads the variable at import time.
+os.environ.setdefault(
+    "GRADIO_TEMP_DIR", str(Path(tempfile.gettempdir()) / f"gradio-{getpass.getuser()}")
+)
 
-from kova_tts import CLONE_SAMPLING, TTS_SAMPLING
-from kova_tts.server import errors as server_errors
-from kova_tts.server.engine import engine_thread
-from kova_tts.server.protocol import ErrorResponse
+import gradio as gr  # noqa: E402
+from fastapi import FastAPI  # noqa: E402
+from fastapi.responses import JSONResponse  # noqa: E402
+
+from kova_tts import CLONE_SAMPLING, TTS_SAMPLING  # noqa: E402
+from kova_tts.server import errors as server_errors  # noqa: E402
+from kova_tts.server.engine import engine_thread  # noqa: E402
+from kova_tts.server.protocol import ErrorResponse  # noqa: E402
 
 # Every way in reaches this file first, and only some of them give it a package to import its
 # siblings from: ``kova-tts demo`` loads it straight from its path. Putting this directory on
@@ -43,10 +55,17 @@ from session import (  # noqa: E402
     BASE_LABEL,
     BASE_VOICE,
     BUSY_TIMEOUT,
+    DEFAULT_ZERO_SHOT_DIR,
+    PRESET_PREFIX,
+    SOURCE_BASE,
+    SOURCE_CLONE,
+    SOURCE_LORA,
+    SOURCE_PRESET,
     DemoError,
     DemoSession,
     build_transcriber,
     load_engine,
+    load_presets,
     warm_up,
 )
 from streaming import MAX_CHARS, STREAM_PATH, add_stream_route  # noqa: E402
@@ -62,8 +81,14 @@ __all__ = [
     "BUSY_TIMEOUT",
     "CLONE_SAMPLING",
     "CSS",
+    "DEFAULT_ZERO_SHOT_DIR",
     "EXAMPLES",
     "MAX_CHARS",
+    "PRESET_PREFIX",
+    "SOURCE_BASE",
+    "SOURCE_CLONE",
+    "SOURCE_LORA",
+    "SOURCE_PRESET",
     "STREAM_PATH",
     "TITLE",
     "TTS_SAMPLING",
@@ -74,6 +99,7 @@ __all__ = [
     "build_transcriber",
     "build_ui",
     "load_engine",
+    "load_presets",
     "main",
     "player_js",
     "warm_up",
@@ -92,7 +118,7 @@ def build_app(
     build one -- is what makes room for the streaming endpoint, and it is also what lets a test
     drive the page and the stream through one client.
     """
-    session = session or DemoSession(loader=load_engine)
+    session = session or DemoSession(loader=load_engine, zero_shot_dir=DEFAULT_ZERO_SHOT_DIR)
     app = FastAPI(title=title, docs_url="/docs", redoc_url=None)
 
     # The server package's handlers: `Busy` becomes a 409 and a validation failure a 422, both
@@ -116,6 +142,9 @@ def build_app(
         theme=gr.themes.Soft(),
         css=CSS,
         show_error=True,
+        # The preset preview player serves its reference clips from here, which Gradio refuses
+        # to do for a directory it was not told about.
+        allowed_paths=[str(session.zero_shot_dir)] if session.zero_shot_dir else None,
     )
 
 
@@ -139,6 +168,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--codec", default=None, help="codec checkpoint")
     parser.add_argument("--wavlm", default=None, help="WavLM directory or Hub repo id")
     parser.add_argument("--lora-dir", default=None, help="directory of LoRA voices")
+    parser.add_argument(
+        "--zero-shot-dir",
+        default=str(DEFAULT_ZERO_SHOT_DIR),
+        help="directory of zero-shot presets: audio files plus a metadata.csv with file_name and "
+        "text columns (default: the bundled %(default)s); pass '' for none",
+    )
     parser.add_argument("--device", default=None, help="torch device, e.g. cuda:1 or mps")
     parser.add_argument(
         "--decode-window",
@@ -201,6 +236,9 @@ def main(argv: list[str] | None = None) -> int:
         format="%(levelname)s %(name)s: %(message)s",
     )
 
+    # One Parakeet for the whole page: the clone tab's live transcript and the engine's
+    # fallback when Clone is pressed with an empty box.
+    transcriber = build_transcriber(device=args.device)
     session = DemoSession(
         loader=lambda: load_engine(
             model=args.model,
@@ -210,10 +248,13 @@ def main(argv: list[str] | None = None) -> int:
             device=args.device,
             backend=args.backend,
             decode_window=args.decode_window,
+            transcriber=transcriber,
         ),
         lora_root=args.lora_dir,
         device=args.device,
         backend=_banner_backend(args),
+        zero_shot_dir=args.zero_shot_dir or None,
+        transcriber=transcriber,
     )
     if args.preload:
         try:

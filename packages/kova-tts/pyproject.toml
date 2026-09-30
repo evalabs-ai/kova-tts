@@ -47,6 +47,9 @@ demo = [
     "fastapi>=0.115",
     "pydantic>=2.9",
     "uvicorn[standard]>=0.32",
+    # The clone tab transcribes a recording as soon as it arrives, with Parakeet through
+    # transformers (already a base dependency); its feature extractor needs librosa.
+    "librosa>=0.10",
 ]
 data = ["faster-whisper>=1.1"]
 # The training command only. `pyyaml` parses the run config; `accelerate` is never imported

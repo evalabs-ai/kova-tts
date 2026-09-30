@@ -92,6 +92,37 @@ class TestOverrides:
         config = make_config(workspace)
         assert train._apply_overrides(config, self.parse(["--config", "x"])) is config
 
+    def test_val_overrides_replace_config_values(self, workspace, monkeypatch):
+        monkeypatch.chdir(workspace)
+        config = make_config(workspace)
+        args = self.parse(["--val-dataset", "data/val.jsonl", "--val-split", "0.1"])
+        updated = train._apply_overrides(config, args)
+        assert updated.val_dataset == workspace / "data" / "val.jsonl"
+        assert updated.val_split == pytest.approx(0.1)
+
+    def test_config_is_optional_when_flags_supply_the_dataset(self, workspace, monkeypatch):
+        monkeypatch.chdir(workspace)
+        runs = []
+        monkeypatch.setattr(train, "run", lambda config: runs.append(config) or workspace)
+        corpus = workspace / "data" / "train.jsonl"
+        assert train.main(["--dataset", str(corpus), "--model", "some/base"]) == 0
+        assert runs[0].dataset == corpus and runs[0].model == "some/base"
+
+    def test_a_dataset_flag_rescues_a_config_whose_own_dataset_is_missing(
+        self, workspace, monkeypatch
+    ):
+        runs = []
+        monkeypatch.setattr(train, "run", lambda config: runs.append(config) or workspace)
+        stale = workspace / "stale.yaml"
+        stale.write_text("dataset: absent.jsonl\n", encoding="utf-8")
+        corpus = workspace / "data" / "train.jsonl"
+        assert train.main(["--config", str(stale), "--dataset", str(corpus)]) == 0
+        assert runs[0].dataset == corpus
+
+    def test_main_without_config_or_dataset_is_a_config_error(self, workspace, capsys):
+        assert train.main([]) == 2
+        assert "'dataset' is required" in capsys.readouterr().err
+
     def test_main_reports_a_bad_config_without_a_traceback(self, workspace, capsys):
         bad = workspace / "bad.yaml"
         bad.write_text("dataset: absent.jsonl\n", encoding="utf-8")

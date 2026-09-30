@@ -28,15 +28,14 @@ EXAMPLES = [
 ]
 
 CLONE_HELP = """\
-**Record yourself reading the script below**, then press Clone. The transcript is already filled
-in to match it, so there is nothing else to type and no transcription step. It becomes a voice
-you can use on the Speak tab straight away. Nothing is saved to disk: the clone lives in this
-session only.
+**Record yourself reading the script below**, then press Clone. It becomes a voice you can use
+on the Speak tab straight away (under **Your recording**). Nothing is saved to disk: the clone
+lives in this session only.
 
-Bringing your own recording instead? Replace the transcript with exactly what it says. Cloning
-*continues* the reference, so a transcript that does not match the audio garbles the output.
-Leaving it empty transcribes the recording automatically, which needs the `data` extra
-(`uv sync --extra data`).
+Bringing your own recording instead? As soon as it is recorded or uploaded, it is transcribed
+automatically (NVIDIA Parakeet) and the transcript box fills in with what was said. Check it
+before cloning: cloning *continues* the reference, so a transcript that does not match the
+audio word for word garbles the output.
 """
 
 #: Passages to read aloud for a cloning reference, so the transcript is known in advance and no

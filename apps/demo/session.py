@@ -12,6 +12,7 @@ a machine with no weights configured and says what to fix.
 from __future__ import annotations
 
 import asyncio
+import csv
 import logging
 import os
 import random
@@ -38,6 +39,47 @@ log = logging.getLogger("kova_tts.demo")
 BASE_VOICE = ""
 BASE_LABEL = "Base voice (no LoRA)"
 
+#: Picker values for zero-shot presets carry this prefix, so a preset can never collide with a
+#: LoRA or a clone of the same name.
+PRESET_PREFIX = "preset:"
+
+#: The bundled zero-shot presets: audio files plus one manifest naming each file's transcript.
+DEFAULT_ZERO_SHOT_DIR = Path(__file__).with_name("zero_shot_voices")
+PRESET_MANIFEST = "metadata.csv"
+
+_AUDIO_SUFFIXES = (".flac", ".wav", ".ogg", ".opus", ".mp3")
+
+#: Where a voice comes from. The Speak tab picks one of these first, then a voice within it.
+SOURCE_BASE = "Base model"
+SOURCE_LORA = "LoRA"
+SOURCE_PRESET = "Zero-shot preset"
+SOURCE_CLONE = "Your recording"
+SOURCES = (SOURCE_BASE, SOURCE_LORA, SOURCE_PRESET, SOURCE_CLONE)
+
+
+def load_presets(directory: str | os.PathLike[str] | None) -> dict[str, tuple[Path, str]]:
+    """``{preset id: (audio path, transcript)}`` from ``<directory>/metadata.csv``.
+
+    The CSV needs a ``file_name`` and a ``text`` column; any others ride along unread. The id is
+    the file's stem. A row with no text, or whose audio file is missing, is skipped rather than
+    guessed at: a zero-shot reference whose text does not match the audio garbles everything
+    generated from it.
+    """
+    if directory is None:
+        return {}
+    manifest = Path(directory) / PRESET_MANIFEST
+    if not manifest.is_file():
+        return {}
+    presets = {}
+    with manifest.open(newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            audio = Path(directory) / (row.get("file_name") or "").strip()
+            transcript = (row.get("text") or "").strip()
+            if transcript and audio.suffix.lower() in _AUDIO_SUFFIXES and audio.is_file():
+                presets[audio.stem] = (audio, transcript)
+    return dict(sorted(presets.items()))
+
+
 #: Seconds a second request waits for the model before it is refused. The overwhelmingly common
 #: collision is one person pressing Speak again: the previous request is abandoned a moment
 #: earlier and its engine is still being released. Waiting turns that into a request that works.
@@ -63,6 +105,10 @@ class DemoSession:
             is populated on the first paint.
         device: Only used to describe the machine in the banner; the loader owns the real one.
         backend: Likewise -- which decode loop the banner should name.
+        zero_shot_dir: Directory of zero-shot presets (see :func:`load_presets`). ``None``
+            offers none.
+        transcriber: ``path -> text`` for the clone tab's automatic transcript. ``None`` falls
+            back to the engine's own transcriber, which means loading the engine first.
     """
 
     def __init__(
@@ -73,13 +119,20 @@ class DemoSession:
         lora_root: str | os.PathLike[str] | None = None,
         device: str | None = None,
         backend: str | None = None,
+        zero_shot_dir: str | os.PathLike[str] | None = None,
+        transcriber: Callable[[str], str] | None = None,
     ) -> None:
         self._tts = tts
         self._loader = loader
         self._lora_root = lora_root
         self._device = device
         self._backend = backend
+        self._transcriber = transcriber
         self._cloned: dict[str, Voice] = {}
+        self._presets = load_presets(zero_shot_dir)
+        self.zero_shot_dir = Path(zero_shot_dir) if self._presets else None
+        # A preset is encoded into a Voice the first time it is used, then kept.
+        self._preset_voices: dict[str, Voice] = {}
         # Non-reentrant engine, non-reentrant page: the streaming endpoint and the clone tab
         # both take this, so a concurrent request is answered instead of crashing the model.
         self._lock = threading.Lock()
@@ -131,16 +184,79 @@ class DemoSession:
         except (MissingArtifact, OSError):
             return []
 
-    def choices(self) -> list[tuple[str, str]]:
-        """``(label, value)`` pairs for the voice picker: base voice, LoRAs, then clones."""
-        cloned = [(f"{name} (cloned)", name) for name in sorted(self._cloned)]
-        return [(BASE_LABEL, BASE_VOICE), *((name, name) for name in self.voices()), *cloned]
+    def choices(self, source: str | None = None) -> list[tuple[str, str]]:
+        """``(label, value)`` pairs for the voice picker.
+
+        With no `source`, every voice: base, LoRAs, presets, then clones. With one of
+        :data:`SOURCES`, only that kind -- which is how the Speak tab fills its picker.
+        """
+        groups = {
+            SOURCE_BASE: [(BASE_LABEL, BASE_VOICE)],
+            SOURCE_LORA: [(name, name) for name in self.voices()],
+            SOURCE_PRESET: [(self.preset_label(pid), PRESET_PREFIX + pid) for pid in self._presets],
+            SOURCE_CLONE: [(f"{name} (cloned)", name) for name in sorted(self._cloned)],
+        }
+        if source is not None:
+            return groups[source]
+        return [pair for group in groups.values() for pair in group]
+
+    def sources(self) -> list[str]:
+        """The voice sources worth offering here. Cloning is always possible; the rest need
+        something installed."""
+        return [
+            s
+            for s in SOURCES
+            if s in (SOURCE_BASE, SOURCE_CLONE)
+            or (s == SOURCE_LORA and self.voices())
+            or (s == SOURCE_PRESET and self._presets)
+        ]
+
+    def source_of(self, name: str | None) -> str:
+        """Which of :data:`SOURCES` a picker value belongs to."""
+        if not name:
+            return SOURCE_BASE
+        if name.startswith(PRESET_PREFIX):
+            return SOURCE_PRESET
+        if name in self._cloned:
+            return SOURCE_CLONE
+        return SOURCE_LORA
+
+    def preset_label(self, preset_id: str) -> str:
+        """``voice_07 · "The train station smelled…"`` -- the text is what tells presets apart."""
+        text = self._presets[preset_id][1]
+        short = text if len(text) <= 48 else text[:47].rsplit(" ", 1)[0] + "…"
+        return f"{preset_id} · “{short}”"
+
+    def preset_reference(self, name: str | None) -> tuple[str, str] | None:
+        """``(audio path, transcript)`` behind a preset picker value, for the preview player."""
+        if not name or not name.startswith(PRESET_PREFIX):
+            return None
+        found = self._presets.get(name.removeprefix(PRESET_PREFIX))
+        return (str(found[0]), found[1]) if found else None
 
     def resolve(self, name: str | None) -> str | Voice | None:
-        """The voice picker's value as the engine wants it: a clone, a LoRA name, or ``None``."""
+        """The voice picker's value as the engine wants it: a clone, a LoRA name, or ``None``.
+
+        A preset is encoded on its first use, which needs the engine -- so this is called only
+        from inside the model lock, as :meth:`frames` is.
+        """
         if not name:
             return None
+        if name.startswith(PRESET_PREFIX):
+            return self._preset_voice(name.removeprefix(PRESET_PREFIX))
         return self._cloned.get(name, name)
+
+    def _preset_voice(self, preset_id: str) -> Voice:
+        if preset_id not in self._preset_voices:
+            if preset_id not in self._presets:
+                raise server_errors.InvalidRequest(
+                    f"voice: no zero-shot preset named {preset_id!r}"
+                )
+            audio, transcript = self._presets[preset_id]
+            self._preset_voices[preset_id] = self.engine().clone(
+                str(audio), transcript, name=PRESET_PREFIX + preset_id
+            )
+        return self._preset_voices[preset_id]
 
     def preset(self, name: str | None = None) -> SamplingParams:
         """The sampling preset a voice calls for.
@@ -148,9 +264,10 @@ class DemoSession:
         The two presets currently differ only in token budget -- cloning is given a longer one,
         because a cloned generation carries the reference through the same budget -- but the
         picker drives the Advanced sliders through this either way, so what the sliders show is
-        always what the engine would have chosen on its own.
+        always what the engine would have chosen on its own. A zero-shot preset is a clone.
         """
-        return CLONE_SAMPLING if name and name in self._cloned else TTS_SAMPLING
+        cloning = bool(name) and (name in self._cloned or name.startswith(PRESET_PREFIX))
+        return CLONE_SAMPLING if cloning else TTS_SAMPLING
 
     def sampling(self, overrides: SamplingOverrides | None, voice: str | None) -> SamplingParams:
         """The preset for `voice`, with whatever the request actually asked to change."""
@@ -194,6 +311,40 @@ class DemoSession:
 
     # ---------------------------------------------------------------------------- callbacks
 
+    def transcribe_reference(self, reference: str | None) -> tuple[str, str | None]:
+        """``(status, transcript)`` for a recording that just arrived on the clone tab.
+
+        The transcript is ``None`` when there is nothing to put in the box -- no clip, or ASR
+        could not run -- and the status says why, so a typed transcript is never wiped.
+        """
+        if not reference:
+            return "", None
+        if not Path(reference).is_file():
+            upload_dir = os.environ.get("GRADIO_TEMP_DIR", "/tmp/gradio")
+            return (
+                "The recording did not reach the server. Record or upload it again; if this "
+                "keeps happening, check that the demo can write to its upload directory "
+                f"(`GRADIO_TEMP_DIR`, currently `{upload_dir}`).",
+                None,
+            )
+        transcriber = self._transcriber or getattr(self._tts, "transcriber", None)
+        if transcriber is None:
+            return "No transcriber here -- type exactly what the recording says.", None
+        try:
+            text = transcriber(reference)
+        except DemoError as exc:
+            return str(exc), None
+        except Exception as exc:
+            log.exception("Transcribing the reference failed")
+            return f"Automatic transcription failed ({exc}); type the transcript instead.", None
+        if not text:
+            return "No speech was heard in that recording. Try again, a little closer.", None
+        return (
+            "Transcribed automatically. Check it matches the recording word for word, then "
+            "press **Clone this voice**.",
+            text,
+        )
+
     def clone_voice(
         self,
         reference: str | None,
@@ -229,6 +380,15 @@ class DemoSession:
                 None,
             )
 
+        if not transcript and self._transcriber is not None:
+            # Outside the model lock: ASR is its own model and need not wait for a generation.
+            status, heard = self.transcribe_reference(reference)
+            if heard is None:
+                return status, None
+            transcript, auto = heard, True
+        else:
+            auto = not transcript
+
         if not self._lock.acquire(blocking=False):
             return BUSY, None
         try:
@@ -254,7 +414,7 @@ class DemoSession:
 
         self._cloned[voice.name] = voice
         used = min(seconds, MAX_REFERENCE_SECONDS)
-        heard = "transcribed automatically" if not transcript else "as typed"
+        heard = "transcribed automatically" if auto else "as typed"
         return (
             f"Cloned **{voice.name}** from {used:.1f} s of audio. It is selected on the Speak "
             f"tab now.\n\nReference transcript ({heard}): “{voice.ref_text}”",
@@ -315,6 +475,11 @@ class DemoSession:
                 "No LoRA voices installed -- set `KOVA_LORA_DIR` to a directory of adapters to "
                 "add some. The base voice works without them, and so does cloning."
             )
+        if self._presets:
+            lines.append(
+                f"{len(self._presets)} zero-shot preset voices, each a reference clip with its "
+                f"transcript -- pick **{SOURCE_PRESET}** to use one without recording anything."
+            )
         return lines
 
 
@@ -328,26 +493,52 @@ def _default_device() -> str:
         return "cpu"
 
 
-def build_transcriber(**options: Any) -> Callable[[str], str]:
-    """The ASR callable :meth:`KovaTTS.clone` uses when no transcript is typed.
+#: The recogniser behind automatic transcripts: NVIDIA Parakeet TDT, run through transformers
+#: (a base dependency). Punctuated and cased, which matters here -- the transcript becomes the
+#: text the cloned voice is conditioned on.
+PARAKEET_MODEL = os.environ.get("KOVA_DEMO_ASR_MODEL", "nvidia/parakeet-tdt-0.6b-v3")
 
-    Built lazily and once, so a visitor who never clones does not wait for a Whisper checkpoint
-    to load. A missing ``data`` extra raises something the clone tab can print, rather than an
-    ImportError from three frames down.
+#: Parakeet's input rate.
+ASR_SAMPLE_RATE = 16_000
+
+
+def load_parakeet(model: str = PARAKEET_MODEL, device: str | None = None) -> Any:
+    """A transformers ASR pipeline for `model`, on `device` (default: CUDA when there is one)."""
+    import torch
+    from transformers import pipeline
+
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    log.info("Loading %s on %s for automatic transcripts.", model, device)
+    return pipeline("automatic-speech-recognition", model=model, device=device)
+
+
+def build_transcriber(
+    *, model: str = PARAKEET_MODEL, device: str | None = None
+) -> Callable[[str], str]:
+    """``path -> transcript``: what the clone tab fills in, and what cloning uses when no
+    transcript is typed.
+
+    Built lazily and once, so a visitor who never clones does not wait for the checkpoint. A
+    missing dependency raises something the clone tab can print, rather than an ImportError from
+    three frames down. Thread-safe: Gradio may call it from two workers at once.
     """
     loaded: list[Any] = []
+    lock = threading.Lock()
 
     def transcribe(path: str) -> str:
-        if not loaded:
-            from kova_tts.data.asr import MissingDependency, load_transcriber
-
-            try:
-                loaded.append(load_transcriber(**options))
-            except MissingDependency as exc:
-                raise DemoError(
-                    f"{exc}\n\nOr type the transcript into the box and clone again."
-                ) from exc
-        return loaded[0].transcribe(audio_io.load_audio(path, SAMPLE_RATE), SAMPLE_RATE)
+        with lock:
+            if not loaded:
+                try:
+                    loaded.append(load_parakeet(model, device))
+                except ImportError as exc:
+                    raise DemoError(
+                        f"Automatic transcription could not start: {exc}\n\nInstall the demo "
+                        f"extra (`uv sync --extra demo`), or type the transcript into the box."
+                    ) from exc
+            wav = audio_io.load_audio(path, ASR_SAMPLE_RATE)
+            result = loaded[0]({"raw": wav, "sampling_rate": ASR_SAMPLE_RATE})
+        return str(result["text"]).strip()
 
     return transcribe
 
@@ -361,8 +552,12 @@ def load_engine(
     device: str | None = None,
     backend: str | None = None,
     decode_window: int | None = None,
+    transcriber: Callable[[str], str] | None = None,
 ) -> Any:
-    """Build the real engine. Called at most once per process, on the first generation."""
+    """Build the real engine. Called at most once per process, on the first generation.
+
+    Pass the session's `transcriber` so the clone tab and the engine share one ASR model.
+    """
     from kova_tts import KovaTTS
 
     log.info("Loading the model; this takes a few seconds the first time.")
@@ -373,7 +568,7 @@ def load_engine(
         backend=backend,
         device=device,
         lora_root=lora_dir,
-        transcriber=build_transcriber(),
+        transcriber=transcriber or build_transcriber(device=device),
         # Omitted rather than passed as None, so the engine keeps owning the default.
         **({} if decode_window is None else {"decode_window": decode_window}),
     )

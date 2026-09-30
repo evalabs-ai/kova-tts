@@ -39,7 +39,7 @@ from transformers import (
 )
 
 from kova_tts import paths
-from kova_tts.finetune.config import ConfigError, FinetuneConfig, load_config, snapshot
+from kova_tts.finetune.config import ConfigError, FinetuneConfig, from_dict, load_config, snapshot
 from kova_tts.finetune.dataset import build_datasets
 from kova_tts.finetune.loss import EndingWeightCollator, EndingWeightTrainer
 
@@ -300,10 +300,18 @@ def build_parser() -> argparse.ArgumentParser:
         prog="kova-tts finetune",
         description="Train a per-voice LoRA adapter from a JSONL corpus.",
     )
-    parser.add_argument("--config", required=True, help="YAML run config")
+    parser.add_argument(
+        "--config",
+        help="YAML run config. Optional: without one, the defaults plus these flags are the "
+        "config, which then needs at least --dataset",
+    )
     parser.add_argument("--dataset", help="override the training corpus")
+    parser.add_argument("--val-dataset", help="override the held-out corpus")
+    parser.add_argument("--val-split", type=float, help="override the held-out fraction")
     parser.add_argument("--output-dir", help="override the parent directory for run outputs")
-    parser.add_argument("--model", help="override the base checkpoint (path or Hub id)")
+    parser.add_argument(
+        "--model", help="override the base checkpoint (path or Hub id); wins over KOVA_MODEL_PATH"
+    )
     parser.add_argument("--voice", help="override the voice name used in the run directory")
     parser.add_argument("--epochs", type=float, help="override the epoch count")
     parser.add_argument("--lr", type=float, help="override the learning rate")
@@ -319,7 +327,9 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     try:
-        config = _apply_overrides(load_config(args.config), args)
+        # Validate only once the overrides are in: a flag may supply what the file lacks.
+        base = load_config(args.config, validate=False) if args.config else from_dict({})
+        config = _apply_overrides(base, args)
         config.validate()
         adapter = run(config)
     except ConfigError as exc:
@@ -334,13 +344,14 @@ def _apply_overrides(config: FinetuneConfig, args: argparse.Namespace) -> Finetu
     changes: dict[str, Any] = {}
     for name, field_name in (
         ("dataset", "dataset"),
+        ("val_dataset", "val_dataset"),
         ("output_dir", "output_dir"),
         ("resume_from", "resume_from"),
     ):
         value = getattr(args, name)
         if value is not None:
             changes[field_name] = Path(value).expanduser().resolve()
-    for name in ("model", "voice", "epochs", "lr"):
+    for name in ("model", "voice", "epochs", "lr", "val_split"):
         value = getattr(args, name)
         if value is not None:
             changes[name] = value

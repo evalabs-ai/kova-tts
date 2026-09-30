@@ -166,6 +166,21 @@ uv run kova-tts finetune --config my_voice.yaml --resume-from runs/ft_001_.../ch
 
 Command-line paths resolve against your working directory, not the config's.
 
+The config file is optional. Without `--config`, the defaults plus your flags are the whole
+config, which is the convenient form for sweeping one recipe over several corpora and base
+checkpoints without writing a file or editing `.env` per run:
+
+```bash
+uv run kova-tts finetune --dataset data/a/train.jsonl --val-dataset data/a/val.jsonl \
+    --model /path/to/base --voice a --output-dir runs
+```
+
+`--model` wins over `KOVA_MODEL_PATH`; the full set is `--dataset`, `--val-dataset`,
+`--val-split`, `--model`, `--voice`, `--output-dir`, `--epochs`, `--lr`, `--resume-from` and
+`--no-wandb`. Flags are applied before the config is validated, so `--dataset` also rescues a
+config whose own `dataset:` no longer exists. Any `KOVA_*` variable can likewise be set in the
+environment for a single command -- a real environment variable always beats `.env`.
+
 !!! note "Running outside the checkout"
 
     `.env` is found by walking up from your working directory, so a run launched from beside its

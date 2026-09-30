@@ -209,8 +209,15 @@ def test_build_ui_constructs_without_launching(demo: Any) -> None:
     ui = demo.build_ui(demo.DemoSession(tts=fake))
 
     assert isinstance(ui, gr.Blocks)
+    # The page opens on the base model; the LoRAs are one source-switch away.
+    radios = [block for block in ui.blocks.values() if isinstance(block, gr.Radio)]
+    assert [choice[1] for choice in radios[0].choices] == [
+        demo.SOURCE_BASE,
+        demo.SOURCE_LORA,
+        demo.SOURCE_CLONE,
+    ]
     dropdowns = [block for block in ui.blocks.values() if isinstance(block, gr.Dropdown)]
-    assert [choice[1] for choice in dropdowns[0].choices] == [demo.BASE_VOICE, "alto", "tenor"]
+    assert [choice[1] for choice in dropdowns[0].choices] == [demo.BASE_VOICE]
     # Building the page must not generate anything -- cached examples would do exactly that,
     # and on a real engine it is a minute of synthesis before the first visitor arrives.
     assert not fake.calls
@@ -361,6 +368,96 @@ def test_a_cloned_voice_is_streamable_by_name(demo: Any, client: Any, reference_
     assert fake.calls[0]["voice"].name == "mine"
     # And a clone gets the cloning preset, exactly as the picker would have shown.
     assert fake.calls[0]["params"].max_tokens == demo.CLONE_SAMPLING.max_tokens
+
+
+@pytest.fixture
+def preset_dir(tmp_path: Path, reference_wav: Path) -> Path:
+    """Two zero-shot presets in metadata.csv, plus rows and clips that must be ignored."""
+    import shutil
+
+    folder = tmp_path / "presets"
+    folder.mkdir()
+    for name in ("voice_01", "voice_02", "orphan"):
+        shutil.copy(reference_wav, folder / f"{name}.wav")
+    (folder / "metadata.csv").write_text(
+        "file_name,text,seconds\n"
+        "voice_02.wav,And a second.,3.0\n"
+        'voice_01.wav,"The first preset speaks, with a comma.",3.0\n'
+        "untranscribed.wav,,3.0\n"  # no text: skipped
+        "missing.wav,Its audio is not there.,3.0\n",  # no file: skipped
+        encoding="utf-8",
+    )
+    return folder
+
+
+def test_presets_are_the_rows_with_audio_and_a_transcript(demo: Any, preset_dir: Path) -> None:
+    presets = demo.load_presets(preset_dir)
+    # orphan.wav has audio but no row; untranscribed has no text; missing has no audio.
+    assert list(presets) == ["voice_01", "voice_02"]
+    assert presets["voice_01"][1] == "The first preset speaks, with a comma."
+    assert demo.load_presets(None) == {} and demo.load_presets(preset_dir / "missing") == {}
+
+
+def test_every_source_offers_its_own_voices(
+    demo: Any, preset_dir: Path, reference_wav: Path
+) -> None:
+    session = demo.DemoSession(tts=FakeTTS(("alto",)), zero_shot_dir=preset_dir)
+    session.clone_voice(str(reference_wav), "Some words.", "mine")
+
+    assert session.sources() == [
+        demo.SOURCE_BASE,
+        demo.SOURCE_LORA,
+        demo.SOURCE_PRESET,
+        demo.SOURCE_CLONE,
+    ]
+    assert session.choices(demo.SOURCE_BASE) == [(demo.BASE_LABEL, demo.BASE_VOICE)]
+    assert [v for _, v in session.choices(demo.SOURCE_LORA)] == ["alto"]
+    assert [v for _, v in session.choices(demo.SOURCE_PRESET)] == [
+        demo.PRESET_PREFIX + "voice_01",
+        demo.PRESET_PREFIX + "voice_02",
+    ]
+    assert [v for _, v in session.choices(demo.SOURCE_CLONE)] == ["mine"]
+    for value, source in (
+        ("", demo.SOURCE_BASE),
+        ("alto", demo.SOURCE_LORA),
+        (demo.PRESET_PREFIX + "voice_02", demo.SOURCE_PRESET),
+        ("mine", demo.SOURCE_CLONE),
+    ):
+        assert session.source_of(value) == source
+    # The preview shows the preset's own clip and its exact transcript.
+    audio, text = session.preset_reference(demo.PRESET_PREFIX + "voice_02")
+    assert audio.endswith("voice_02.wav") and text == "And a second."
+
+
+def test_a_preset_is_cloned_once_then_reused(demo: Any, client: Any, preset_dir: Path) -> None:
+    http, _session, fake = client(zero_shot_dir=preset_dir)
+    value = demo.PRESET_PREFIX + "voice_01"
+
+    with http:
+        first = speak(http, demo.STREAM_PATH, text="Say this.", voice=value)
+        second = speak(http, demo.STREAM_PATH, text="And this.", voice=value)
+
+    assert first.status == second.status == 200
+    # Encoded from its transcript, not transcribed, and only on first use.
+    assert (
+        len(fake.cloned) == 1
+        and fake.cloned[0]["transcript"] == "The first preset speaks, with a comma."
+    )
+    assert all(isinstance(call["voice"], Voice) for call in fake.calls)
+    assert fake.calls[0]["params"].max_tokens == demo.CLONE_SAMPLING.max_tokens
+
+
+def test_an_unknown_preset_is_refused(demo: Any, client: Any, preset_dir: Path) -> None:
+    http, _session, fake = client(zero_shot_dir=preset_dir)
+    with http:
+        stream = speak(http, demo.STREAM_PATH, text="Say this.", voice=demo.PRESET_PREFIX + "nope")
+    assert stream.status == 422 and not fake.calls
+
+
+def test_the_bundled_presets_all_have_transcripts(demo: Any) -> None:
+    presets = demo.load_presets(demo.DEFAULT_ZERO_SHOT_DIR)
+    assert len(presets) == 50
+    assert all(path.suffix == ".flac" and text for path, text in presets.values())
 
 
 def test_preset_follows_the_voice(demo: Any, reference_wav: Path) -> None:
@@ -580,20 +677,65 @@ def test_cloning_transcribes_when_it_can(demo: Any, reference_wav: Path) -> None
     assert "Heard by the transcriber." in message
 
 
-def test_the_missing_data_extra_is_explained(demo: Any, reference_wav: Path, monkeypatch) -> None:
-    """The ``data`` extra is optional, so its absence has to read like a suggestion."""
-    from kova_tts.data import asr
+def test_a_missing_asr_dependency_is_explained(demo: Any, reference_wav: Path, monkeypatch) -> None:
+    """Parakeet needs librosa from the demo extra; its absence has to read like a suggestion."""
 
-    def unavailable(**_options: Any) -> Any:
-        raise asr.MissingDependency("Transcription needs faster-whisper.")
+    def unavailable(*_args: Any, **_options: Any) -> Any:
+        raise ImportError("ParakeetFeatureExtractor requires the librosa library.")
 
-    monkeypatch.setattr(asr, "load_transcriber", unavailable)
+    monkeypatch.setattr(sys.modules["session"], "load_parakeet", unavailable)
     session = demo.DemoSession(tts=FakeTTS(transcriber=demo.build_transcriber()))
 
     message, name = session.clone_voice(str(reference_wav), "", "")
 
     assert name is None
-    assert "faster-whisper" in message and "type the transcript" in message
+    assert "librosa" in message and "type the transcript" in message
+
+
+def test_a_recording_is_transcribed_the_moment_it_arrives(demo: Any, reference_wav: Path) -> None:
+    heard: list[str] = []
+
+    def transcriber(path: str) -> str:
+        heard.append(path)
+        return "What the recording says."
+
+    # No engine at all: the clone tab must fill the box without loading the TTS model.
+    session = demo.DemoSession(loader=lambda: pytest.fail("must not load"), transcriber=transcriber)
+
+    status, text = session.transcribe_reference(str(reference_wav))
+
+    assert text == "What the recording says." and heard == [str(reference_wav)]
+    assert "Transcribed automatically" in status
+    assert session.transcribe_reference(None) == ("", None)
+
+
+def test_a_recording_that_never_arrived_says_so(demo: Any, tmp_path: Path) -> None:
+    """The upload failing (e.g. an unwritable temp dir) must not read as 'nothing recorded'."""
+    session = demo.DemoSession(transcriber=lambda path: pytest.fail("nothing to transcribe"))
+
+    status, text = session.transcribe_reference(str(tmp_path / "gone.wav"))
+
+    assert text is None and "did not reach the server" in status and "GRADIO_TEMP_DIR" in status
+
+
+def test_clone_uses_the_page_transcriber_for_an_empty_box(demo: Any, reference_wav: Path) -> None:
+    fake = FakeTTS(transcriber=None)
+    session = demo.DemoSession(tts=fake, transcriber=lambda path: "Heard on the page.")
+
+    message, name = session.clone_voice(str(reference_wav), "", "mine")
+
+    assert name == "mine" and fake.cloned[0]["transcript"] == "Heard on the page."
+    assert "transcribed automatically" in message
+
+
+def test_uploads_go_to_a_directory_this_user_owns(demo: Any) -> None:
+    """A /tmp/gradio created by another user made every upload fail with PermissionError."""
+    import os
+
+    temp = Path(os.environ["GRADIO_TEMP_DIR"])
+    assert temp != Path("/tmp/gradio")
+    temp.mkdir(parents=True, exist_ok=True)
+    assert os.access(temp, os.W_OK)
 
 
 # ------------------------------------------------------------------------------ the node pack

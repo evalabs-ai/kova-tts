@@ -240,8 +240,12 @@ class FinetuneConfig:
 # ----------------------------------------------------------------------------------- loading
 
 
-def load_config(path: str | os.PathLike[str]) -> FinetuneConfig:
-    """Read and validate a YAML config. Relative paths resolve against its directory."""
+def load_config(path: str | os.PathLike[str], *, validate: bool = True) -> FinetuneConfig:
+    """Read and validate a YAML config. Relative paths resolve against its directory.
+
+    ``validate=False`` defers the check to the caller -- the command line does this so a
+    ``--dataset`` override can stand in for a config whose own ``dataset`` is absent.
+    """
     file = Path(path).expanduser()
     if not file.is_file():
         raise ConfigError(f"Config file not found: {file}")
@@ -262,7 +266,8 @@ def load_config(path: str | os.PathLike[str]) -> FinetuneConfig:
         )
 
     config = from_dict(data, base_dir=file.parent)
-    config.validate()
+    if validate:
+        config.validate()
     return config
 
 
