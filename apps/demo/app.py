@@ -50,7 +50,7 @@ from kova_tts.server.protocol import ErrorResponse  # noqa: E402
 # the path makes the plain imports below work in all of them.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from content import BUSY, CSS, EXAMPLES, TITLE  # noqa: E402
+from content import BUSY, CSS, EXAMPLES, HEAD, TITLE  # noqa: E402
 from session import (  # noqa: E402
     BASE_LABEL,
     BASE_VOICE,
@@ -69,7 +69,7 @@ from session import (  # noqa: E402
     warm_up,
 )
 from streaming import MAX_CHARS, STREAM_PATH, add_stream_route  # noqa: E402
-from ui import build_ui, player_js  # noqa: E402
+from ui import build_theme, build_ui, player_js  # noqa: E402
 
 log = logging.getLogger("kova_tts.demo")
 
@@ -96,6 +96,7 @@ __all__ = [
     "DemoSession",
     "add_stream_route",
     "build_app",
+    "build_theme",
     "build_transcriber",
     "build_ui",
     "load_engine",
@@ -139,8 +140,9 @@ def build_app(
         app,
         build_ui(session, title=title, stream_path=stream_path),
         path="/",
-        theme=gr.themes.Soft(),
+        theme=build_theme(),
         css=CSS,
+        head=HEAD,
         show_error=True,
         # The preset preview player serves its reference clips from here, which Gradio refuses
         # to do for a directory it was not told about.
@@ -236,7 +238,7 @@ def main(argv: list[str] | None = None) -> int:
         format="%(levelname)s %(name)s: %(message)s",
     )
 
-    # One Parakeet for the whole page: the clone tab's live transcript and the engine's
+    # One Parakeet for the whole page: the clone panel's live transcript and the engine's
     # fallback when Clone is pressed with an empty box.
     transcriber = build_transcriber(device=args.device)
     session = DemoSession(

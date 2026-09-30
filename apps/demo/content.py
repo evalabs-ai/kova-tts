@@ -1,9 +1,17 @@
-"""What the page says: its prose, its example prompts, and the player's own markup."""
+"""What the page says: its prose, its example prompts, its stylesheet, and the player's markup.
+
+The look follows kova.ai: a warm cream canvas, near-black ink, one teal accent, pill buttons and
+lowercase headings. The palette lives in :data:`CSS` as custom properties, so a colour is
+changed in one place.
+"""
 
 from __future__ import annotations
 
+from pathlib import Path
+
 TITLE = "Kova TTS"
-TAGLINE = "Expressive speech that starts playing before it has finished generating."
+HEADING = "what should it say?"
+TAGLINE = "Sound starts in under half a second — the rest keeps generating while it plays."
 
 READY = "Ready when you are."
 
@@ -14,7 +22,7 @@ BUSY = (
 
 #: Prompts written for this demo, each showing something: a held pause, a change of register,
 #: digits and units read aloud, and a long passage whose later sentences are still being
-#: generated while the first are playing.
+#: generated while the first are playing. The Random button deals them out.
 EXAMPLES = [
     "The kettle clicked off, and for a moment the whole kitchen was completely quiet.",
     "Wait. You're telling me the entire thing runs on one graphics card? That cannot be right.",
@@ -27,16 +35,19 @@ EXAMPLES = [
     "land where a person would put them, and the question at the end still rises.",
 ]
 
-CLONE_HELP = """\
-**Record yourself reading the script below**, then press Clone. It becomes a voice you can use
-on the Speak tab straight away (under **Your recording**). Nothing is saved to disk: the clone
-lives in this session only.
+CLONE_INTRO = (
+    "Record yourself reading the passage — about 15 seconds. The new voice is selected as soon "
+    "as it is ready."
+)
 
-Bringing your own recording instead? As soon as it is recorded or uploaded, it is transcribed
-automatically (NVIDIA Parakeet) and the transcript box fills in with what was said. Check it
-before cloning: cloning *continues* the reference, so a transcript that does not match the
-audio word for word garbles the output.
+TRANSCRIPT_HELP = """\
+Reading the passage? The transcript already matches it. Bringing your own recording? It is
+transcribed automatically (NVIDIA Parakeet) as soon as it arrives, and the box below fills in
+with what was said. Check it before cloning: cloning *continues* the reference, so a transcript
+that does not match the audio word for word garbles the output.
 """
+
+PRIVACY = "Clones stay in memory for this session only and are never written to disk."
 
 #: Passages to read aloud for a cloning reference, so the transcript is known in advance and no
 #: transcription is needed. Each is 10-15 seconds at a normal pace -- long enough to carry a
@@ -53,65 +64,416 @@ CLONE_SCRIPTS = (
     "-- you cannot measure something this small without nudging it somewhere else first.",
 )
 
-CSS = """
-footer { display: none !important; }
-"""
+#: The brand's typeface. It is not on Google Fonts, so it arrives through ``<head>``; anyone
+#: offline gets Hanken Grotesk from the theme, or the system sans after that.
+HEAD = (
+    '<link rel="stylesheet" '
+    'href="https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600&display=swap">'
+)
 
-#: The player's own markup and style. It travels inside the component rather than through
-#: ``launch(css=...)`` so that :func:`~ui.build_ui` embedded in someone else's server still
-#: looks like a player. ``<style>`` set through innerHTML applies; ``<script>`` would not run,
-#: which is why the JavaScript arrives through a load event instead.
-PLAYER_HTML = f"""
-<style>
-/* Everything is scoped under #kova-player: an id outranks Gradio's own button, link and
-   .prose rules, which would otherwise repaint the controls grey and squash the icons. */
-#kova-player {{ margin-top: 0.5rem; }}
-#kova-player .kova-track {{ display: flex; align-items: center; gap: 0.75rem; }}
+LOGO_SVG = Path(__file__).with_name("kova-logo.svg").read_text(encoding="utf-8")
+
+#: Stroke icons, drawn at 24 px and scaled by CSS. Buttons that Gradio renders take theirs as a
+#: CSS mask (see ``--icon`` in :data:`CSS`), so these are only for markup written here.
+ICON_ARROW = (
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>'
+)
+
+
+def _mask(path: str) -> str:
+    """An inline SVG as a CSS ``url()``, for ``mask-image``."""
+    svg = (
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' "
+        f"stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>{path}</svg>"
+    )
+    return f'url("data:image/svg+xml;utf8,{svg}")'
+
+
+_SHUFFLE = _mask(
+    "<path d='m18 14 4 4-4 4'/><path d='m18 2 4 4-4 4'/>"
+    "<path d='M2 18h1.973a4 4 0 0 0 3.3-1.7l5.454-8.6a4 4 0 0 1 3.3-1.7H22'/>"
+    "<path d='M2 6h1.972a4 4 0 0 1 3.6 2.2'/><path d='M22 18h-6.041a4 4 0 0 1-3.3-1.8l-.359-.45'/>"
+)
+_MIC_PLUS = _mask(
+    "<rect x='7' y='3' width='6' height='11' rx='3'/>"
+    "<path d='M3.5 11a6.5 6.5 0 0 0 11 4.7M10 18v3M19 5v6M16 8h6'/>"
+)
+_SLIDERS = _mask(
+    "<path d='M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12'/><circle cx='16' cy='6' r='2'/>"
+    "<circle cx='10' cy='12' r='2'/><circle cx='18' cy='18' r='2'/>"
+)
+_PLAY = _mask("<path d='M7 4.5v15l12-7.5z' fill='black'/>")
+_STOP = _mask("<rect x='6' y='6' width='12' height='12' rx='2' fill='black'/>")
+_REFRESH = _mask("<path d='M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7'/>")
+_CLOSE = _mask("<path d='M6 6l12 12M18 6 6 18'/>")
+_LOCK = _mask(
+    "<rect x='5' y='11' width='14' height='10' rx='2'/><path d='M8 11V7a4 4 0 0 1 8 0v4'/>"
+)
+
+CSS = f"""
+:root, .dark {{
+  --kova-canvas: #f5f1ea;
+  --kova-surface: #faf8f4;
+  --kova-sunken: #f1ece3;
+  --kova-ink: #2a2826;
+  --kova-ink-2: #4a4844;
+  --kova-muted: #6b6862;
+  --kova-line: #d9d2c7;
+  --kova-line-soft: #e4ddd2;
+  --kova-taupe: #c4bdb0;
+  --kova-teal: #0f8f86;
+  --kova-teal-strong: #0b746c;
+  --kova-teal-deep: #08453f;
+  --kova-mint: #e6eee8;
+  --kova-mint-line: #bcd2cc;
+  --kova-red: #d52b1e;
+  --kova-shadow: 0 18px 50px -20px rgba(42, 40, 38, 0.18);
+  --kova-sans: "General Sans", "Hanken Grotesk", system-ui, -apple-system, sans-serif;
+  --kova-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}}
+
+footer {{ display: none !important; }}
+body, gradio-app, .gradio-container, .main, .contain {{
+  background: var(--kova-canvas) !important; color: var(--kova-ink); font-family: var(--kova-sans);
+}}
+.gradio-container {{ max-width: 100% !important; padding: 0 !important; }}
+.gradio-container .main, .gradio-container .main > .wrap, .gradio-container .contain {{
+  padding: 0 !important;
+}}
+/* gr.HTML pads its content even with padding=False; our markup does its own spacing. */
+.gradio-container .html-container {{ padding: 0 !important; }}
+
+/* ------------------------------------------------------------------------- header */
+#kova-header {{
+  display: flex; align-items: center; gap: 16px; padding: 22px 40px; flex-wrap: wrap;
+}}
+#kova-header .kova-logo svg {{ display: block; height: 24px; width: auto; }}
+#kova-header .kova-badge {{
+  border: 1px solid var(--kova-line); border-radius: 999px; padding: 2px 10px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.04em; color: var(--kova-muted);
+}}
+#kova-header .kova-spacer {{ flex: 1; }}
+#kova-header .kova-machine {{
+  display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px;
+  border: 1px solid var(--kova-line); border-radius: 999px; font-size: 13px;
+  color: var(--kova-muted); font-family: var(--kova-mono);
+}}
+#kova-header .kova-machine::before {{
+  content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--kova-teal);
+}}
+#kova-header .kova-docs {{
+  display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 16px;
+  border-radius: 999px; background: var(--kova-mint); border: 1px solid var(--kova-mint-line);
+  color: var(--kova-teal-deep); font-size: 14px; font-weight: 500; text-decoration: none;
+}}
+#kova-header .kova-docs svg {{
+  width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.5;
+  stroke-linecap: round; stroke-linejoin: round;
+}}
+
+/* ------------------------------------------------------------------------ layout */
+#kova-main {{
+  width: 100%; max-width: 808px; margin: 0 auto; padding: 24px 24px 64px;
+  box-sizing: border-box; gap: 24px !important;
+}}
+#kova-intro h1 {{
+  margin: 0 0 6px; font-size: clamp(1.75rem, 4vw, 2.25rem); line-height: 1.1; font-weight: 600;
+  letter-spacing: -0.028em; color: var(--kova-ink); text-transform: lowercase;
+}}
+#kova-intro p {{ margin: 0; font-size: 16px; line-height: 1.6; color: var(--kova-muted); }}
+#kova-banner {{
+  background: #fbeee4; border: 1px solid #efcfb8; border-radius: 16px; padding: 12px 18px;
+  color: var(--kova-ink-2); font-size: 14px;
+}}
+#kova-banner p {{ margin: 4px 0; }}
+
+/* Every Gradio block inside our cards goes flat: the cards draw the only borders. */
+#kova-main .block, #kova-main .form, #kova-main .gr-group, #kova-main .styler {{
+  background: transparent !important; border: none !important; box-shadow: none !important;
+  padding: 0 !important; border-radius: 0 !important;
+}}
+
+/* ---------------------------------------------------------------------- composer */
+#kova-composer {{
+  background: var(--kova-surface) !important; border: 1px solid var(--kova-line) !important;
+  border-radius: 20px !important; box-shadow: var(--kova-shadow) !important;
+  overflow: hidden; gap: 0 !important;
+}}
+#kova-text textarea {{
+  background: transparent !important; border: none !important; box-shadow: none !important;
+  padding: 20px 22px 8px !important; font-family: var(--kova-sans) !important;
+  font-size: 18px !important; line-height: 1.55 !important; color: var(--kova-ink) !important;
+  min-height: 150px;
+}}
+#kova-text textarea::placeholder {{ color: var(--kova-muted); opacity: 0.7; }}
+#kova-toolbar {{
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px !important;
+  padding: 12px 14px 14px 12px; border-top: 1px solid var(--kova-line-soft);
+}}
+#kova-meta {{
+  display: flex; align-items: center; justify-content: space-between; gap: 8px !important;
+  padding: 0 22px 6px 12px;
+}}
+#kova-meta > *, #kova-toolbar > * {{
+  flex: none !important; min-width: 0 !important; width: auto !important;
+}}
+#kova-toolbar > #kova-new-voice {{ margin-left: auto; }}
+#kova-count {{ font-size: 13px; color: var(--kova-muted); font-variant-numeric: tabular-nums; }}
+#kova-count[data-over] {{ color: var(--kova-red); }}
+
+/* Buttons: pills, with icons drawn by a mask so they take the text colour. */
+#kova-main button.kova-btn {{
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 44px; min-width: 0; padding: 0 16px; border-radius: 999px !important;
+  font-family: var(--kova-sans); font-size: 14px; font-weight: 500; box-shadow: none !important;
+  border: 1px solid var(--kova-line) !important; background: var(--kova-surface) !important;
+  color: var(--kova-ink-2) !important; cursor: pointer; transition: background 150ms, color 150ms;
+  flex: none !important; flex-direction: row !important; white-space: nowrap;
+  width: auto !important; max-width: none !important; height: 44px; align-self: center;
+}}
+#kova-main button.kova-btn:hover {{ background: #ede6dc !important; }}
+#kova-main button.kova-btn::before {{
+  content: ""; flex: none; width: 16px; height: 16px; background: currentColor;
+  -webkit-mask: var(--icon) center / contain no-repeat;
+  mask: var(--icon) center / contain no-repeat;
+}}
+#kova-main button.kova-btn.kova-plain {{
+  border-color: transparent !important; background: transparent !important;
+  color: var(--kova-muted) !important; font-size: 13px; padding: 0 10px;
+}}
+#kova-main button.kova-btn.kova-plain:hover {{ color: var(--kova-teal) !important; }}
+#kova-main button.kova-btn.kova-icon-only {{
+  width: 44px !important; min-width: 44px !important; padding: 0; font-size: 0;
+}}
+#kova-main button.kova-btn.kova-icon-only::before {{ width: 18px; height: 18px; }}
+#kova-main button.kova-btn.kova-on {{
+  background: var(--kova-mint) !important; border-color: var(--kova-mint-line) !important;
+  color: var(--kova-teal-deep) !important;
+}}
+#kova-main button.kova-btn.kova-primary {{
+  background: var(--kova-teal-strong) !important; border-color: var(--kova-teal-strong) !important;
+  color: #fff !important; font-size: 15px; font-weight: 600; padding: 0 22px;
+}}
+#kova-main button.kova-btn.kova-primary:hover {{ background: var(--kova-teal-deep) !important; }}
+#kova-main button.kova-btn.kova-dark {{
+  background: var(--kova-ink) !important; border-color: var(--kova-ink) !important;
+  color: #fff !important; font-size: 15px; font-weight: 600; padding: 0 20px;
+}}
+#kova-main button.kova-btn.kova-no-icon::before {{ display: none; }}
+#kova-random {{ --icon: {_SHUFFLE}; }}
+#kova-new-voice {{ --icon: {_MIC_PLUS}; }}
+#kova-settings {{ --icon: {_SLIDERS}; }}
+#kova-speak {{ --icon: {_PLAY}; }}
+#kova-stop {{ --icon: {_STOP}; }}
+#kova-another {{ --icon: {_REFRESH}; }}
+#kova-clone-close {{ --icon: {_CLOSE}; }}
+#kova-speak::before, #kova-stop::before {{ width: 12px !important; height: 12px !important; }}
+
+/* Speak and Stop share one slot: the player says which one is live. */
+body[data-kova-busy] #kova-speak,
+body:not([data-kova-busy]) #kova-stop {{ display: none !important; }}
+
+#kova-source {{ width: 170px !important; }}
+#kova-voice {{ width: 250px !important; }}
+#kova-source .wrap, #kova-voice .wrap {{
+  height: 44px; min-height: 0; box-sizing: border-box; padding: 0 8px 0 14px;
+  border: 1px solid var(--kova-line) !important; border-radius: 999px !important;
+  background: var(--kova-surface) !important;
+}}
+#kova-source .wrap-inner, #kova-voice .wrap-inner {{ padding: 0 !important; height: 100%; }}
+#kova-source input, #kova-voice input {{
+  text-overflow: ellipsis;
+  background: transparent !important; font-family: var(--kova-sans); font-size: 14px;
+  color: var(--kova-ink);
+}}
+
+/* Under the toolbar: a preset's reference clip, or the nudge to record a first voice. */
+#kova-preview, #kova-empty-clones {{
+  border-top: 1px solid var(--kova-line-soft) !important; padding: 12px 22px 14px !important;
+  gap: 16px !important; align-items: center;
+}}
+#kova-preset-audio {{ flex: 0 0 280px !important; }}
+#kova-preset-text {{ flex: 1 1 0 !important; font-size: 14px; color: var(--kova-ink-2); }}
+.kova-hint {{ margin: 0; font-size: 14px; color: var(--kova-muted); }}
+
+/* --------------------------------------------------------------- clone + settings */
+#kova-clone {{
+  background: var(--kova-sunken) !important; border-top: 1px solid var(--kova-line-soft) !important;
+  padding: 20px 22px 22px !important; gap: 16px !important;
+}}
+.kova-panel-head {{ display: flex; align-items: flex-start; gap: 12px; }}
+.kova-panel-head h2 {{
+  margin: 0; font-size: 15px; font-weight: 600; color: var(--kova-ink); text-transform: lowercase;
+}}
+.kova-panel-head p {{
+  margin: 4px 0 0; font-size: 13px; line-height: 1.5; color: var(--kova-muted);
+}}
+#kova-clone-row {{ gap: 16px !important; align-items: stretch; }}
+#kova-script-card, #kova-record-card {{
+  background: var(--kova-surface) !important; border: 1px solid var(--kova-line) !important;
+  border-radius: 14px !important; padding: 14px 16px !important; gap: 10px !important;
+}}
+.kova-eyebrow {{
+  font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--kova-muted);
+}}
+#kova-script textarea {{
+  background: transparent !important; border: none !important; box-shadow: none !important;
+  padding: 0 !important; font-family: var(--kova-sans) !important; font-size: 16px !important;
+  line-height: 1.55 !important; color: var(--kova-ink) !important; resize: none;
+}}
+#kova-clone-name input, #kova-transcript textarea {{
+  background: #fff !important; border: 1px solid var(--kova-line) !important;
+  border-radius: 12px !important; font-family: var(--kova-sans); font-size: 15px;
+}}
+#kova-clone-name input {{ min-height: 44px; }}
+#kova-clone-row label span, #kova-transcript-box span {{
+  color: var(--kova-ink-2); font-size: 13px;
+}}
+#kova-clone-status {{ font-size: 14px; color: var(--kova-ink-2); }}
+.kova-privacy {{
+  display: flex; align-items: center; gap: 8px; margin: 0;
+  font-size: 12px; color: var(--kova-muted);
+}}
+.kova-privacy::before {{
+  content: ""; width: 13px; height: 13px; background: currentColor;
+  -webkit-mask: {_LOCK} center / contain no-repeat; mask: {_LOCK} center / contain no-repeat;
+}}
+
+#kova-settings-panel {{
+  background: var(--kova-surface) !important; border: 1px solid var(--kova-line) !important;
+  border-radius: 20px !important; padding: 20px 22px !important; gap: 16px !important;
+}}
+#kova-settings-panel input[type=range] {{ accent-color: var(--kova-teal); }}
+#kova-settings-panel label span, #kova-settings-panel .info {{ font-size: 13px; }}
+#kova-reset {{ margin-left: auto; }}
+
+/* ------------------------------------------------------------------------- player */
+#kova-player {{
+  background: var(--kova-surface); border: 1px solid var(--kova-line); border-radius: 20px;
+  padding: 18px 22px; display: flex; flex-direction: column; gap: 14px;
+}}
+#kova-player .kova-track {{ display: flex; align-items: center; gap: 16px; }}
 #kova-player .kova-toggle, #kova-player .kova-download {{
   flex: none; display: inline-flex; align-items: center; justify-content: center;
-  width: 2rem; height: 2rem; min-width: 0; margin: 0; padding: 0;
-  border: none; border-radius: 50%; box-shadow: none; filter: none; opacity: 1;
-  text-decoration: none; cursor: pointer; transition: background 120ms, opacity 120ms;
+  width: 44px; height: 44px; min-width: 0; margin: 0; padding: 0; border-radius: 50%;
+  box-shadow: none; filter: none; opacity: 1; text-decoration: none; cursor: pointer;
+  transition: background 120ms, opacity 120ms;
 }}
-#kova-player .kova-toggle {{ background: var(--color-accent, #3b82f6); }}
-#kova-player .kova-toggle:not(:disabled):hover {{ filter: brightness(1.1); }}
+#kova-player .kova-toggle {{ border: none; background: var(--kova-teal-strong); }}
+#kova-player .kova-toggle:not(:disabled):hover {{ background: var(--kova-teal-deep); }}
 #kova-player .kova-toggle:disabled {{ opacity: 0.35; cursor: default; }}
-#kova-player .kova-download {{ background: transparent; }}
-#kova-player .kova-download:hover {{ background: var(--neutral-100, #f3f4f6); }}
+#kova-player .kova-download {{ border: 1px solid var(--kova-line); background: transparent; }}
+#kova-player .kova-download:hover {{ background: #ede6dc; }}
 #kova-player .kova-download[hidden] {{ display: none; }}
 #kova-player .kova-toggle svg, #kova-player .kova-download svg {{
-  flex: none; width: 1rem; height: 1rem;
+  flex: none; width: 16px; height: 16px;
 }}
 #kova-player .kova-toggle svg * {{ fill: #fff; }}
-#kova-player .kova-download svg * {{ fill: var(--color-accent, #3b82f6); }}
+#kova-player .kova-download svg * {{ fill: var(--kova-ink-2); }}
 #kova-player .kova-toggle .kova-icon-pause,
 #kova-player[data-playing] .kova-toggle .kova-icon-play {{ display: none; }}
 #kova-player[data-playing] .kova-toggle .kova-icon-pause {{ display: block; }}
-#kova-player .kova-seek {{ flex: 1; padding: 0.5rem 0; touch-action: none; outline: none; }}
+#kova-player .kova-seek {{
+  flex: 1; min-width: 0; height: 44px; display: flex; align-items: center; gap: 3px;
+  touch-action: none; outline: none; border-radius: 8px;
+}}
 #kova-player[data-seekable] .kova-seek {{ cursor: pointer; }}
+#kova-player .kova-seek:focus-visible {{ box-shadow: 0 0 0 2px rgba(15, 143, 134, 0.4); }}
 #kova-player .kova-bar {{
-  height: 6px; border-radius: 3px;
-  background: var(--neutral-200, #e5e7eb); overflow: hidden;
+  flex: 1; min-width: 1px; height: 4px; border-radius: 2px; background: var(--kova-line-soft);
+  transition: height 120ms ease-out, background 80ms linear;
 }}
-#kova-player[data-seekable] .kova-seek:hover .kova-bar,
-#kova-player .kova-seek:focus-visible .kova-bar {{
-  height: 8px; margin: -1px 0; border-radius: 4px;
-}}
-#kova-player .kova-seek:focus-visible .kova-bar {{
-  box-shadow: 0 0 0 2px var(--color-accent, #3b82f6);
-}}
-#kova-player .kova-fill {{
-  height: 100%; width: 0%; border-radius: inherit;
-  background: var(--color-accent, #3b82f6); transition: width 80ms linear;
-}}
-#kova-player[data-dragging] .kova-fill {{ transition: none; }}
+#kova-player .kova-bar[data-state="ready"] {{ background: var(--kova-taupe); }}
+#kova-player .kova-bar[data-state="played"] {{ background: var(--kova-teal); }}
+#kova-player[data-dragging] .kova-bar {{ transition: none; }}
 #kova-player .kova-elapsed {{
-  font-variant-numeric: tabular-nums; font-size: 0.85rem; opacity: 0.75;
+  flex: none; font-family: var(--kova-mono); font-size: 13px; color: var(--kova-muted);
+  font-variant-numeric: tabular-nums;
+}}
+#kova-player .kova-foot {{
+  display: flex; align-items: center; gap: 32px; flex-wrap: wrap;
+  padding-top: 14px; border-top: 1px solid var(--kova-line-soft);
+}}
+#kova-player .kova-stats {{ display: flex; gap: 32px; }}
+#kova-player .kova-stats[hidden] {{ display: none; }}
+#kova-player .kova-stat {{ display: flex; flex-direction: column; gap: 2px; }}
+#kova-player .kova-stat span:first-child {{ font-size: 12px; color: var(--kova-muted); }}
+#kova-player .kova-stat span:last-child {{
+  font-family: var(--kova-mono); font-size: 15px; font-weight: 500; color: var(--kova-ink);
 }}
 #kova-player .kova-status {{
-  min-height: 1.6em; margin-top: 0.6rem; font-variant-numeric: tabular-nums;
+  margin: 0 0 0 auto; font-size: 13px; color: var(--kova-muted); text-align: right;
 }}
-</style>
+
+@media (max-width: 640px) {{
+  #kova-header {{ padding: 16px; gap: 10px; }}
+  #kova-header .kova-docs {{ display: none; }}
+  #kova-main {{ padding: 8px 16px 40px; }}
+  #kova-text textarea {{ padding: 16px 16px 8px !important; font-size: 17px !important; }}
+  #kova-meta {{ padding: 0 16px 4px 6px; }}
+  #kova-toolbar {{ padding: 12px; }}
+  #kova-toolbar > #kova-source, #kova-toolbar > #kova-voice {{
+    order: 3; flex: 1 1 100% !important; width: 100% !important;
+  }}
+  #kova-preview, #kova-empty-clones {{ flex-direction: column; align-items: stretch; }}
+  #kova-preset-audio {{ flex: none !important; }}
+  #kova-new-voice, #kova-settings {{ order: 4; }}
+  #kova-toolbar > #kova-new-voice {{ margin-left: 0; }}
+  #kova-speak, #kova-stop {{ order: 5; margin-left: auto; }}
+  #kova-clone {{ padding: 16px !important; }}
+  #kova-clone-row {{ flex-direction: column; }}
+  #kova-player {{ padding: 14px 16px; }}
+  #kova-player .kova-track {{ gap: 10px; }}
+  #kova-player .kova-seek {{ gap: 2px; }}
+  #kova-player .kova-bar {{ min-width: 0; }}
+  /* Half the bars: at phone width, 72 of them do not fit beside the controls. */
+  #kova-player .kova-bar:nth-child(2n) {{ display: none; }}
+  #kova-player .kova-elapsed {{ font-size: 12px; }}
+  #kova-player .kova-stats {{ gap: 18px; }}
+  #kova-player .kova-stat span:last-child {{ font-size: 13px; white-space: nowrap; }}
+  #kova-player .kova-status {{ margin: 0; text-align: left; }}
+}}
+"""
+
+
+def header_html(summary: str, docs_url: str | None = "/docs") -> str:
+    """The top bar: the wordmark, what this machine is running, and a link to the API."""
+    docs = (
+        f'<a class="kova-docs" href="{docs_url}" target="_blank" rel="noopener">API docs'
+        f"{ICON_ARROW}</a>"
+        if docs_url
+        else ""
+    )
+    return (
+        '<header id="kova-header">'
+        f'<a class="kova-logo" href="https://kova.ai" aria-label="Kova">{LOGO_SVG}</a>'
+        '<span class="kova-badge">tts demo</span><span class="kova-spacer"></span>'
+        f'<span class="kova-machine" title="Device, backend and installed voices">{summary}</span>'
+        f"{docs}</header>"
+    )
+
+
+INTRO_HTML = f'<div id="kova-intro"><h1>{HEADING}</h1><p>{TAGLINE}</p></div>'
+
+CLONE_HEAD_HTML = (
+    f'<div class="kova-panel-head"><div><h2>clone a voice</h2><p>{CLONE_INTRO}</p></div></div>'
+)
+
+SETTINGS_HEAD_HTML = (
+    '<div class="kova-panel-head"><div><h2>generation settings</h2>'
+    "<p>These start at the preset for the selected voice, which is what the model was tuned "
+    "with; switching voice resets them. Most people never need to touch them.</p></div></div>"
+)
+
+PRIVACY_HTML = f'<p class="kova-privacy">{PRIVACY}</p>'
+
+#: How many bars the waveform is drawn with. Each covers an equal slice of the clip's length.
+WAVE_BARS = 72
+
+#: The player's own markup. Its style is in :data:`CSS`; ``<script>`` set through innerHTML
+#: would not run, which is why the JavaScript arrives through a load event instead.
+PLAYER_HTML = f"""
 <div class="kova-player" id="kova-player">
   <div class="kova-track">
     <button class="kova-toggle" id="kova-toggle" type="button" aria-label="Play" disabled>
@@ -125,7 +487,7 @@ PLAYER_HTML = f"""
     </button>
     <div class="kova-seek" id="kova-seek" role="slider" tabindex="0" aria-label="Seek"
          aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
-      <div class="kova-bar"><div class="kova-fill" id="kova-fill"></div></div>
+      {'<span class="kova-bar"></span>' * WAVE_BARS}
     </div>
     <span class="kova-elapsed" id="kova-elapsed">0:00 / 0:00</span>
     <a class="kova-download" id="kova-download" href="#" download="kova-speech.wav"
@@ -139,7 +501,14 @@ PLAYER_HTML = f"""
   </div>
   <!-- The finished clip plays through this element; the transport above is its only face. -->
   <audio id="kova-clip" preload="auto" hidden></audio>
-  <p class="kova-status" id="kova-status">{READY}</p>
+  <div class="kova-foot">
+    <div class="kova-stats" id="kova-stats" hidden>
+      <div class="kova-stat"><span>First audio</span><span id="kova-stat-first">–</span></div>
+      <div class="kova-stat"><span>Speech</span><span id="kova-stat-speech">–</span></div>
+      <div class="kova-stat"><span>Speed</span><span id="kova-stat-speed">–</span></div>
+    </div>
+    <p class="kova-status" id="kova-status" role="status">{READY}</p>
+  </div>
 </div>
 """
 
@@ -153,3 +522,6 @@ SPEAK_JS = """
 """
 
 STOP_JS = "() => window.kovaDemo.stop()"
+
+#: Keeps the character count under the text box in step, however the text changed.
+COUNT_JS = "(text) => { window.kovaDemo && window.kovaDemo.count(text); }"

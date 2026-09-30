@@ -2,7 +2,7 @@
 
 The engine is not reentrant and neither is this page. One :class:`Generator`, one KV cache: a
 second overlapping request raises. A single lock guards every path that touches the model --
-the streaming endpoint and the clone tab alike -- and losing the race is a sentence the page
+the streaming endpoint and the clone panel alike -- and losing the race is a sentence the page
 prints, not a traceback.
 
 The engine loads lazily, on the first generation rather than at import, so the page comes up on
@@ -49,7 +49,7 @@ PRESET_MANIFEST = "metadata.csv"
 
 _AUDIO_SUFFIXES = (".flac", ".wav", ".ogg", ".opus", ".mp3")
 
-#: Where a voice comes from. The Speak tab picks one of these first, then a voice within it.
+#: Where a voice comes from. The prompt box picks one of these first, then a voice within it.
 SOURCE_BASE = "Base model"
 SOURCE_LORA = "LoRA"
 SOURCE_PRESET = "Zero-shot preset"
@@ -107,7 +107,7 @@ class DemoSession:
         backend: Likewise -- which decode loop the banner should name.
         zero_shot_dir: Directory of zero-shot presets (see :func:`load_presets`). ``None``
             offers none.
-        transcriber: ``path -> text`` for the clone tab's automatic transcript. ``None`` falls
+        transcriber: ``path -> text`` for the clone panel's automatic transcript. ``None`` falls
             back to the engine's own transcriber, which means loading the engine first.
     """
 
@@ -133,7 +133,7 @@ class DemoSession:
         self.zero_shot_dir = Path(zero_shot_dir) if self._presets else None
         # A preset is encoded into a Voice the first time it is used, then kept.
         self._preset_voices: dict[str, Voice] = {}
-        # Non-reentrant engine, non-reentrant page: the streaming endpoint and the clone tab
+        # Non-reentrant engine, non-reentrant page: the streaming endpoint and the clone panel
         # both take this, so a concurrent request is answered instead of crashing the model.
         self._lock = threading.Lock()
 
@@ -188,7 +188,7 @@ class DemoSession:
         """``(label, value)`` pairs for the voice picker.
 
         With no `source`, every voice: base, LoRAs, presets, then clones. With one of
-        :data:`SOURCES`, only that kind -- which is how the Speak tab fills its picker.
+        :data:`SOURCES`, only that kind -- which is how the prompt box fills its picker.
         """
         groups = {
             SOURCE_BASE: [(BASE_LABEL, BASE_VOICE)],
@@ -284,7 +284,7 @@ class DemoSession:
     async def acquire(self) -> None:
         """Take the model, waiting up to :data:`BUSY_TIMEOUT` for it, or raise ``Busy``.
 
-        Off the event loop, because this is a threading lock shared with the clone tab, which
+        Off the event loop, because this is a threading lock shared with the clone panel, which
         Gradio calls from a worker thread. Split from :meth:`release` rather than offered as a
         context manager because a streaming response has to know it holds the model *before*
         the status code goes out: once the stream is open, 200 has already been sent.
@@ -312,7 +312,7 @@ class DemoSession:
     # ---------------------------------------------------------------------------- callbacks
 
     def transcribe_reference(self, reference: str | None) -> tuple[str, str | None]:
-        """``(status, transcript)`` for a recording that just arrived on the clone tab.
+        """``(status, transcript)`` for a recording that just arrived on the clone panel.
 
         The transcript is ``None`` when there is nothing to put in the box -- no clip, or ASR
         could not run -- and the status says why, so a typed transcript is never wiped.
@@ -341,7 +341,7 @@ class DemoSession:
             return "No speech was heard in that recording. Try again, a little closer.", None
         return (
             "Transcribed automatically. Check it matches the recording word for word, then "
-            "press **Clone this voice**.",
+            "press **Clone**.",
             text,
         )
 
@@ -435,8 +435,18 @@ class DemoSession:
 
     # ------------------------------------------------------------------------------ banner
 
-    def notices(self) -> list[str]:
-        """Lines for the banner: what this machine has, and what it is missing.
+    def summary(self) -> str:
+        """The header's one-line status, e.g. ``cuda:0 · torch · 52 voices``.
+
+        The count is every ready-made voice: installed LoRAs plus zero-shot presets.
+        """
+        found = len(self.voices()) + len(self._presets)
+        voices = f"{found} voice{'s' if found != 1 else ''}"
+        parts = [self._device or _default_device(), self._backend, voices]
+        return " · ".join(part for part in parts if part)
+
+    def warnings(self) -> list[str]:
+        """The banner lines that need acting on: a slow device, or weights that are not there.
 
         Everything here is cheap and offline. Resolving the codec would download it from the
         Hub, which is not something a page load should do.
@@ -454,15 +464,22 @@ class DemoSession:
                 "real time. Point `KOVA_MODEL_PATH` at an MLX-converted checkpoint for the "
                 "fast path -- see `docs/apple-silicon.md`."
             )
-        else:
-            via = f" via the {self._backend} backend" if self._backend else ""
-            lines.append(f"Running on `{device}`{via}.")
 
         if self._tts is None:
             try:
                 paths.model_path()
             except MissingArtifact as exc:
                 lines.append(f"**No usable model weights.** {exc}\n\nRun `kova-tts paths`.")
+        return lines
+
+    def notices(self) -> list[str]:
+        """Everything worth knowing about this machine: :meth:`warnings`, then the routine lines."""
+        lines = self.warnings()
+        device = self._device or _default_device()
+        slow = device.startswith("cpu") or (device.startswith("mps") and self._backend != "mlx")
+        if not slow:
+            via = f" via the {self._backend} backend" if self._backend else ""
+            lines.insert(0, f"Running on `{device}`{via}.")
 
         found = self.voices()
         if found:
@@ -516,11 +533,11 @@ def load_parakeet(model: str = PARAKEET_MODEL, device: str | None = None) -> Any
 def build_transcriber(
     *, model: str = PARAKEET_MODEL, device: str | None = None
 ) -> Callable[[str], str]:
-    """``path -> transcript``: what the clone tab fills in, and what cloning uses when no
+    """``path -> transcript``: what the clone panel fills in, and what cloning uses when no
     transcript is typed.
 
     Built lazily and once, so a visitor who never clones does not wait for the checkpoint. A
-    missing dependency raises something the clone tab can print, rather than an ImportError from
+    missing dependency raises something the clone panel can print, rather than an ImportError from
     three frames down. Thread-safe: Gradio may call it from two workers at once.
     """
     loaded: list[Any] = []
@@ -556,7 +573,7 @@ def load_engine(
 ) -> Any:
     """Build the real engine. Called at most once per process, on the first generation.
 
-    Pass the session's `transcriber` so the clone tab and the engine share one ASR model.
+    Pass the session's `transcriber` so the clone panel and the engine share one ASR model.
     """
     from kova_tts import KovaTTS
 

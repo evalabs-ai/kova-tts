@@ -210,14 +210,13 @@ def test_build_ui_constructs_without_launching(demo: Any) -> None:
 
     assert isinstance(ui, gr.Blocks)
     # The page opens on the base model; the LoRAs are one source-switch away.
-    radios = [block for block in ui.blocks.values() if isinstance(block, gr.Radio)]
-    assert [choice[1] for choice in radios[0].choices] == [
+    by_id = {block.elem_id: block for block in ui.blocks.values() if block.elem_id}
+    assert [choice[1] for choice in by_id["kova-source"].choices] == [
         demo.SOURCE_BASE,
         demo.SOURCE_LORA,
         demo.SOURCE_CLONE,
     ]
-    dropdowns = [block for block in ui.blocks.values() if isinstance(block, gr.Dropdown)]
-    assert [choice[1] for choice in dropdowns[0].choices] == [demo.BASE_VOICE]
+    assert [choice[1] for choice in by_id["kova-voice"].choices] == [demo.BASE_VOICE]
     # Building the page must not generate anything -- cached examples would do exactly that,
     # and on a real engine it is a minute of synthesis before the first visitor arrives.
     assert not fake.calls

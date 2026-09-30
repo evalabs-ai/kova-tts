@@ -14,7 +14,8 @@
  * -- not a timer, and not the network -- decide when each frame is heard.
  *
  * app.py loads this file and runs it once per page load, which installs `window.kovaDemo`. The
- * Speak and Stop buttons are ordinary Gradio buttons whose click handlers are pure JavaScript.
+ * Speak and Stop buttons are ordinary Gradio buttons whose click handlers are pure JavaScript;
+ * they share one slot in the toolbar, and `data-kova-busy` on <body> says which one shows.
  */
 
 (function () {
@@ -67,6 +68,12 @@
 
     /** Longest run of words from the text that goes into a download's filename. */
     const FILENAME_WORDS = 5;
+
+    /** Seconds of audio each loudness reading covers, for drawing the waveform. */
+    const LEVEL_WINDOW_SEC = 0.02;
+
+    /** Tallest and shortest a waveform bar is drawn, in pixels; silence is the shortest. */
+    const BAR_HEIGHT = { min: 4, max: 36 };
 
     // ------------------------------------------------------------------ decoding and packaging
 
@@ -249,6 +256,8 @@
             this.sampleRate = CODEC_SAMPLE_RATE;
             this.length = new LengthEstimate();
             this.paused = false;
+            /** RMS loudness of each LEVEL_WINDOW_SEC of the audio received, for the waveform. */
+            this.levels = [];
         }
 
         /** Open the context, asking for the codec's rate so nothing has to be resampled. */
@@ -299,6 +308,7 @@
             if (int16.length === 0) return;
             this.sampleRate = sampleRate || this.sampleRate;
             this.chunks.push(int16);
+            this.measure(int16);
 
             const samples = resampleLinear(
                 int16ToFloat32(int16),
@@ -323,6 +333,17 @@
             source.onended = () => {
                 this.sources = this.sources.filter((queued) => queued !== source);
             };
+        }
+
+        /** Append `int16`'s loudness to `levels`, one reading per LEVEL_WINDOW_SEC. */
+        measure(int16) {
+            const window = Math.max(1, Math.round(this.sampleRate * LEVEL_WINDOW_SEC));
+            for (let start = 0; start < int16.length; start += window) {
+                const end = Math.min(int16.length, start + window);
+                let sum = 0;
+                for (let i = start; i < end; i++) sum += (int16[i] / 32768) ** 2;
+                this.levels.push(Math.sqrt(sum / (end - start)));
+            }
         }
 
         /**
@@ -359,6 +380,7 @@
             this.stopPlayback();
             this.paused = false;
             this.chunks = [];
+            this.levels = [];
             this.startedAt = null;
             this.nextStartTime = this.context ? this.context.currentTime : 0;
             this.length.reset();
@@ -419,9 +441,34 @@
         if (status) status.textContent = message;
     }
 
+    /** Fill in the three figures under the waveform, or hide them when there are none. */
+    function setStats(stats) {
+        const box = element("kova-stats");
+        if (!box) return;
+        box.hidden = !stats;
+        if (!stats) return;
+        for (const [key, value] of Object.entries(stats)) {
+            const slot = element(`kova-stat-${key}`);
+            if (slot) slot.textContent = value;
+        }
+    }
+
+    /** The character count under the text box: what is typed, against what is allowed. */
+    function count(text) {
+        const counter = element("kova-count");
+        if (!counter) return;
+        const length = (text || "").length;
+        counter.textContent = `${length.toLocaleString("en-US")} / ${MAX_CHARS.toLocaleString("en-US")}`;
+        counter.toggleAttribute("data-over", length > MAX_CHARS);
+    }
+
     function clock(seconds) {
         const whole = Math.max(0, Math.floor(seconds));
         return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+    }
+
+    function milliseconds(seconds) {
+        return `${Math.round(seconds * 1000).toLocaleString("en-US")} ms`;
     }
 
     /** The finished clip can be scrubbed once it exists and nothing is being generated. */
@@ -448,6 +495,40 @@
         });
     }
 
+    /**
+     * The waveform: one bar per equal slice of the (estimated, then exact) total. A bar's height
+     * is the loudest moment in its slice; the slices not yet generated stay flat. Colour says
+     * whether it has been heard ("played"), is waiting to be ("ready"), or does not exist yet.
+     */
+    function paintWave(total, position) {
+        const seek = element("kova-seek");
+        if (!seek) return;
+        const bars = seek.children;
+        const levels = player.levels;
+        const perBar = total > 0 ? total / bars.length : 0;
+        const peak = levels.reduce((loudest, level) => Math.max(loudest, level), 0) || 1;
+        for (let i = 0; i < bars.length; i++) {
+            const from = Math.floor((i * perBar) / LEVEL_WINDOW_SEC);
+            const to = Math.floor(((i + 1) * perBar) / LEVEL_WINDOW_SEC);
+            let height = BAR_HEIGHT.min;
+            let state = "pending";
+            if (perBar > 0 && from < levels.length) {
+                let loudest = 0;
+                for (let j = from; j < Math.min(to, levels.length); j++) {
+                    loudest = Math.max(loudest, levels[j]);
+                }
+                // A square root lifts the quiet parts, so speech reads as speech and not as a
+                // few spikes over a flat line.
+                const scale = Math.sqrt(loudest / peak);
+                height = BAR_HEIGHT.min + (BAR_HEIGHT.max - BAR_HEIGHT.min) * scale;
+                state = (i + 0.5) * perBar <= position ? "played" : "ready";
+            }
+            const bar = bars[i];
+            bar.style.height = `${height.toFixed(1)}px`;
+            if (bar.dataset.state !== state) bar.dataset.state = state;
+        }
+    }
+
     /** Paint the transport: playback position within the (estimated, then exact) total. */
     function paint() {
         const total = Math.max(player.length.value(), player.duration());
@@ -457,12 +538,16 @@
         const label = `${clock(position)} / ${approximate}${clock(total)}`;
         const isPlaying = playing();
 
-        const fill = element("kova-fill");
         const elapsed = element("kova-elapsed");
         const root = element("kova-player");
         const toggle = element("kova-toggle");
         const seek = element("kova-seek");
-        if (fill) fill.style.width = total > 0 ? `${Math.min(100, (100 * position) / total)}%` : "0%";
+        paintWave(total, position);
+        // Speak and Stop share a slot in the toolbar; this is what the stylesheet reads.
+        document.body.toggleAttribute(
+            "data-kova-busy",
+            Boolean(active) || (!onClip && player.sources.length > 0),
+        )
         if (elapsed) elapsed.textContent = label;
         if (root) {
             root.toggleAttribute("data-playing", isPlaying);
@@ -678,7 +763,8 @@
         player.length.begin(text, active.voice);
 
         retireClip();
-        setStatus(modelLoaded ? "Generating..." : "Loading the model, which takes a few seconds...");
+        setStats(null);
+        setStatus(modelLoaded ? "Generating…" : "Loading the model, which takes a few seconds…");
         schedulePaint();
 
         const started = performance.now();
@@ -717,10 +803,12 @@
                     player.enqueue(event.audio, event.sample_rate);
                     player.length.received(player.duration());
                     active.chunks += 1;
-                    setStatus(
-                        `First audio in ${active.firstAudio.toFixed(2)} s · ` +
-                            `${player.duration().toFixed(1)} s generated...`,
-                    );
+                    setStats({
+                        first: milliseconds(active.firstAudio),
+                        speech: `${player.duration().toFixed(1)} s so far`,
+                        speed: "…",
+                    });
+                    setStatus("Playing while it generates…");
                 } else if (typeof event.message === "string") {
                     setStatus(`That failed: ${event.message}`);
                     player.length.settle(player.duration());
@@ -764,10 +852,12 @@
             return;
         }
         const speed = elapsed > 0 ? spoken / elapsed : 0;
-        setStatus(
-            `First audio in ${(run.firstAudio || 0).toFixed(2)} s · ${spoken.toFixed(1)} s of ` +
-                `speech in ${elapsed.toFixed(1)} s (${speed.toFixed(1)}× real time)`,
-        );
+        setStats({
+            first: milliseconds(run.firstAudio || 0),
+            speech: `${spoken.toFixed(1)} s in ${elapsed.toFixed(1)} s`,
+            speed: `${speed.toFixed(1)}× real time`,
+        });
+        setStatus("Done. Scrub or download the clip.");
     }
 
     /**
@@ -867,5 +957,5 @@
     // on the first pointer event means the hardware is awake before the first frame arrives.
     document.addEventListener("pointerdown", () => player.unlock(), { once: true, capture: true });
 
-    window.kovaDemo = { speak, stop, player };
+    window.kovaDemo = { speak, stop, count, player };
 })();

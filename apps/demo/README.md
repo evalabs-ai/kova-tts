@@ -1,7 +1,7 @@
 # Kova TTS demo
 
 A single-page Gradio app: type something, pick a voice, hear it start playing before it has
-finished generating. Voice cloning is on the second tab.
+finished generating. Voice cloning is one button away, in the same prompt box.
 
 ## Run it
 
@@ -30,40 +30,50 @@ Hub. If the page says it cannot find the weights, `uv run kova-tts paths` shows 
 
 ## What is on the page
 
-**Speak.** Text box, voice picker, and a Speak button. The voice is chosen in two steps: a
-**Voice source**, then a voice within it —
+One page, one prompt box, styled after [kova.ai](https://kova.ai). The header says what the
+machine is running (device, backend, installed voices) and links to the endpoint's API docs;
+anything that needs fixing — a CPU-only machine, missing weights — shows as a banner above the
+box.
+
+**The prompt box.** Type, or press **Random** for one of the example prompts. The toolbar
+underneath holds the character count, the voice picker, **New voice**, the settings button and
+**Speak**. The voice is chosen in two steps: a source, then a voice within it —
 
 | Source | What it is |
 |---|---|
 | Base model | the checkpoint with no adapter and no reference |
 | LoRA | an adapter from `--lora-dir` / `KOVA_LORA_DIR` (shown only when there are some) |
-| Zero-shot preset | one of the bundled reference clips, previewed with its transcript; encoded on first use |
-| Your recording | anything cloned on the Clone tab this session |
+| Zero-shot preset | one of the bundled reference clips, previewed under the toolbar with its transcript; encoded on first use |
+| Your recording | anything cloned this session |
 
-Sound starts after the first
-~390 ms frame is decoded and runs continuously to the end of the utterance, while the later
-sentences are still being generated. Stop halts it at once and leaves everything ready to go
-again. When the generation finishes, the same audio appears in a normal player below the
-progress bar, for scrubbing and downloading — it is built in the browser from the frames it
-already received, so nothing is generated or encoded twice. The line underneath reports time to
-first audio, and how much speech was produced in how long.
+ Sound starts after the first ~390 ms frame is decoded and runs continuously to the end
+of the utterance, while the later sentences are still being generated. While it does, Speak
+becomes **Stop**, which halts it at once and leaves everything ready to go again.
 
-**Advanced** (collapsed) holds temperature, top-p, top-k, repetition penalty and the token
-budget. They start at the tuned preset, and switching voice resets them to the preset that voice
-calls for — the cloning preset differs only in giving the model a larger token budget. You
-should not have to open this accordion at all.
+**The player** draws the clip as a waveform: bars fill in as audio arrives, turn teal as they are
+heard, and the rest of the bar stays flat until it has been generated. Once the generation
+finishes, the same bar scrubs the finished clip and a download button appears — the clip is
+built in the browser from the frames it already received, so nothing is generated or encoded
+twice. Underneath: time to first audio, how much speech was produced in how long, and how that
+compares to real time.
 
-**Clone a voice.** The tab shows a short passage to read aloud, with the transcript already
-filled in to match it — record yourself reading it, press Clone, and there is nothing to type
-and nothing to transcribe. "Different script" rotates through the passages, and leaves a
-transcript you typed yourself alone. The voice appears in the picker on the Speak tab
-immediately.
+**Settings** (the sliders button) holds temperature, top-p, top-k, repetition penalty and the
+token budget. They start at the tuned preset, and switching voice resets them to the preset that
+voice calls for — the cloning preset differs only in giving the model a larger token budget.
+"Reset to preset" puts them back. You should not have to open this panel at all.
 
-Any recording or upload is transcribed the moment it arrives — NVIDIA Parakeet TDT
-(`nvidia/parakeet-tdt-0.6b-v3`, via transformers; override with `KOVA_DEMO_ASR_MODEL`) — and the
-transcript box fills in with what was actually said. Check it before cloning: cloning *continues*
-the reference, and a transcript that does not match garbles the output. Clones live in memory for
-the life of the process and are never written to disk.
+**New voice** opens the cloning panel inside the prompt box. It shows a short passage to read
+aloud, with the transcript already filled in to match it — record yourself reading it, name it,
+press Clone, and there is nothing to type and nothing to transcribe. "Another" rotates through
+the passages, and leaves a transcript you typed yourself alone. When the clone is ready the panel
+closes and the new voice is already selected.
+
+Bringing your own recording works too. Any recording or upload is transcribed the moment it
+arrives — NVIDIA Parakeet TDT (`nvidia/parakeet-tdt-0.6b-v3`, via transformers; override with
+`KOVA_DEMO_ASR_MODEL`) — and the transcript opens, filled in with what was actually said. Check
+it before cloning: cloning *continues* the reference, and a transcript that does not match
+garbles the output. Clones live in memory for the life of the process and are never written to
+disk.
 
 Uploads land in a per-user `GRADIO_TEMP_DIR` (`$TMPDIR/gradio-<user>`) rather than Gradio's
 shared `/tmp/gradio`: on a machine where another user ran Gradio first, that directory is theirs
@@ -105,11 +115,12 @@ is a FastAPI app underneath, so `build_app()` mounts the Blocks inside one of it
 | File | What is in it |
 |---|---|
 | `app.py` | `build_app()`, the argument parsing, and `main()`. Composes the rest. |
-| `content.py` | Everything the page says: prose, example prompts, the player's markup. |
+| `content.py` | Everything the page says and how it looks: prose, example prompts, the stylesheet, the header and the player's markup. |
 | `session.py` | `DemoSession` — the engine, the lock that serializes it, and cloned voices. |
 | `streaming.py` | The `/v1/tts/stream` endpoint the player pulls audio from. |
-| `ui.py` | `build_ui()` — the two tabs and their callbacks. |
-| `player.js` | The browser half: SSE in, Web Audio out, plus the finished clip and the wav. |
+| `ui.py` | `build_ui()` — the prompt box, its panels and callbacks — and `build_theme()`. |
+| `player.js` | The browser half: SSE in, Web Audio out, the waveform, and the finished clip and the wav. |
+| `kova-logo.svg` | The Kova wordmark, inlined into the header. |
 
 `app.py` puts its own directory on `sys.path` when it is imported, so the modules beside it are
 imported by plain name. That is what lets `kova-tts demo` load `app.py` straight from its path
