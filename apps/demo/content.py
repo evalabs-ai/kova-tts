@@ -17,7 +17,7 @@ READY = "Ready when you are."
 
 BUSY = (
     "The model is already speaking. It generates one clip at a time -- give it a moment and "
-    "press Speak again."
+    "press Generate again."
 )
 
 #: Prompts written for this demo, each showing something: a held pause, a change of register,
@@ -103,7 +103,6 @@ _SLIDERS = _mask(
     "<circle cx='10' cy='12' r='2'/><circle cx='18' cy='18' r='2'/>"
 )
 _PLAY = _mask("<path d='M7 4.5v15l12-7.5z' fill='black'/>")
-_STOP = _mask("<rect x='6' y='6' width='12' height='12' rx='2' fill='black'/>")
 _REFRESH = _mask("<path d='M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7'/>")
 _CLOSE = _mask("<path d='M6 6l12 12M18 6 6 18'/>")
 _LOCK = _mask(
@@ -242,8 +241,9 @@ body, gradio-app, .gradio-container, .main, .contain {{
   color: var(--kova-muted) !important; font-size: 13px; padding: 0 10px;
 }}
 #kova-main button.kova-btn.kova-plain:hover {{ color: var(--kova-teal) !important; }}
+/* The label stays for screen readers at zero size; no gap, or it still pushes the icon aside. */
 #kova-main button.kova-btn.kova-icon-only {{
-  width: 44px !important; min-width: 44px !important; padding: 0; font-size: 0;
+  width: 44px !important; min-width: 44px !important; padding: 0; font-size: 0; gap: 0;
 }}
 #kova-main button.kova-btn.kova-icon-only::before {{ width: 18px; height: 18px; }}
 #kova-main button.kova-btn.kova-on {{
@@ -263,21 +263,18 @@ body, gradio-app, .gradio-container, .main, .contain {{
 #kova-random {{ --icon: {_SHUFFLE}; }}
 #kova-record-more {{ --icon: {_MIC_PLUS}; }}
 #kova-settings {{ --icon: {_SLIDERS}; }}
-#kova-speak {{ --icon: {_PLAY}; }}
-#kova-stop {{ --icon: {_STOP}; }}
+#kova-generate {{ --icon: {_PLAY}; }}
 #kova-another {{ --icon: {_REFRESH}; }}
 #kova-clone-close {{ --icon: {_CLOSE}; }}
-#kova-speak::before, #kova-stop::before {{ width: 12px !important; height: 12px !important; }}
+#kova-generate::before {{ width: 12px !important; height: 12px !important; }}
 
-/* Speak and Stop share one slot: the player says which one is live. */
-body[data-kova-busy] #kova-speak,
-body:not([data-kova-busy]) #kova-stop {{ display: none !important; }}
-
-/* The voice source: a segmented switch, one pill per source, the picked one raised.
+/* The voice source: a segmented switch, one pill per source, the picked one raised. The
+   options' .wrap is the one holding the labels; Gradio's status tracker is a .wrap too. */
    Gradio centres a container-less block with auto margins; in the toolbar those would split
    the free space with the settings button's and float the switch off the left edge. */
 #kova-source {{ margin: 0 !important; padding: 0 !important; }}
-#kova-source .wrap {{
+#kova-source .wrap:has(> label) {{
+  position: relative;
   display: flex; flex-wrap: nowrap; gap: 2px !important; height: 44px; box-sizing: border-box;
   padding: 3px; border: 1px solid var(--kova-line); border-radius: 999px;
   background: var(--kova-sunken);
@@ -290,9 +287,25 @@ body:not([data-kova-busy]) #kova-stop {{ display: none !important; }}
   color: var(--kova-muted) !important; cursor: pointer; transition: background 150ms, color 150ms;
 }}
 #kova-source label:hover {{ color: var(--kova-ink) !important; }}
-#kova-source label.selected {{
+#kova-source label.selected,
+#kova-source .kova-thumb {{
   background: var(--kova-surface) !important; color: var(--kova-ink) !important;
   box-shadow: 0 1px 3px rgba(42, 40, 38, 0.14) !important;
+}}
+/* switch.js slides one thumb behind the labels onto the picked one; once it is in, the picked
+   label leaves the raised look to it. */
+#kova-source .kova-thumb {{
+  position: absolute; top: 0; left: 0; z-index: 0; pointer-events: none;
+  border-radius: 999px; opacity: 0;
+  transition-property: transform, width, height; transition-duration: 280ms;
+  transition-timing-function: cubic-bezier(0.3, 0.7, 0.3, 1);
+}}
+#kova-source .wrap:has(> label)[data-sliding] label.selected {{
+  background: transparent !important; box-shadow: none !important;
+}}
+#kova-source label {{ z-index: 1; }}
+@media (prefers-reduced-motion: reduce) {{
+  #kova-source .kova-thumb {{ transition: none; }}
 }}
 /* The radio itself stays in the page for keyboards and screen readers, just not on it. */
 #kova-source input[type=radio] {{
@@ -331,7 +344,22 @@ body:not([data-kova-busy]) #kova-stop {{ display: none !important; }}
   gap: 16px !important; align-items: center;
 }}
 #kova-preset-audio {{ flex: 0 0 280px !important; }}
-#kova-preset-text {{ flex: 1 1 0 !important; font-size: 14px; color: var(--kova-ink-2); }}
+/* The transcript gets a card as tall as the player beside it: a heading in its top-left corner
+   and the quote under it. The card is the markdown's own wrapper, because Gradio's
+   hide-container wins on the block itself. */
+#kova-preset-text {{
+  flex: 1 1 0 !important; align-self: stretch; display: flex !important; flex-direction: column;
+  font-size: 14px; color: var(--kova-ink-2);
+}}
+#kova-preset-text [data-testid="markdown-wrapper"] {{
+  flex: 1 1 auto; padding: 14px 18px; border-radius: 14px; background: var(--kova-sunken);
+}}
+#kova-preset-text p {{ margin: 0; line-height: 1.55; }}
+/* The heading, in the clone panel's "Read aloud" style. */
+#kova-preset-text p:first-child {{
+  margin-bottom: 8px; font-size: 12px; font-weight: 600; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--kova-muted);
+}}
 .kova-hint {{ margin: 0; font-size: 14px; color: var(--kova-muted); }}
 
 /* --------------------------------------------------------------- clone + settings */
@@ -350,6 +378,11 @@ body:not([data-kova-busy]) #kova-stop {{ display: none !important; }}
 #kova-script-card, #kova-record-card {{
   background: var(--kova-surface) !important; border: 1px solid var(--kova-line) !important;
   border-radius: 14px !important; padding: 14px 16px !important; gap: 10px !important;
+}}
+/* Nothing to clear before anything is recorded: Gradio shows its Clear button regardless. A
+   clip brings a download link into the same corner, which is what tells the two states apart. */
+#kova-reference .icon-button-wrapper:not(:has([data-testid="download-link"])) {{
+  display: none !important;
 }}
 .kova-eyebrow {{
   font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
@@ -456,10 +489,11 @@ body:not([data-kova-busy]) #kova-stop {{ display: none !important; }}
   #kova-toolbar {{ padding: 12px; }}
   /* Four pills do not fit a phone's width on one line: two by two. */
   #kova-toolbar > #kova-source {{ flex: 1 1 100% !important; width: 100% !important; }}
-  #kova-source .wrap {{
+  #kova-source .wrap:has(> label) {{
     display: grid; grid-template-columns: 1fr 1fr; height: auto; border-radius: 22px;
   }}
   #kova-source label {{ height: 36px; padding: 0 8px !important; border-radius: 18px !important; }}
+  #kova-source .kova-thumb {{ border-radius: 18px; }}
   #kova-voice-row {{ padding: 12px 12px 12px 16px !important; }}
   #kova-preview, #kova-empty-clones, #kova-empty-loras {{
     flex-direction: column; align-items: stretch;
@@ -560,16 +594,14 @@ PLAYER_HTML = f"""
 </div>
 """
 
-#: What the Speak button runs. Gradio hands a browser-side handler the values of `inputs`, in
+#: What the Generate button runs. Gradio hands a browser-side handler the values of `inputs`, in
 #: order, so this signature is the ``controls`` list in :func:`~ui.build_ui`.
-SPEAK_JS = """
+GENERATE_JS = """
 (text, voice, temperature, top_p, top_k, repetition_penalty, max_tokens) =>
   window.kovaDemo.speak({
     text, voice, temperature, top_p, top_k, repetition_penalty, max_tokens
   })
 """
-
-STOP_JS = "() => window.kovaDemo.stop()"
 
 #: Keeps the character count under the text box in step, however the text changed.
 COUNT_JS = "(text) => { window.kovaDemo && window.kovaDemo.count(text); }"

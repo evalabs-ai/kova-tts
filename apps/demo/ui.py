@@ -11,7 +11,7 @@ Speaking never reaches Python. Gradio's own streaming audio component would take
 segments -- a lossy codec applied 2.5 times a second, with an encoder priming gap at every
 segment join. It is audible, and it is not in the finished clip, so one generation comes out
 damaged in the streaming player and clean in the other. The page therefore does not use that
-component: the Speak button hands the control values to ``player.js``, which pulls raw
+component: the Generate button hands the control values to ``player.js``, which pulls raw
 16-bit PCM from :data:`~streaming.STREAM_PATH` and schedules it on a Web Audio clock. Nothing is
 re-encoded between the codec and the speakers.
 """
@@ -32,12 +32,11 @@ from content import (
     CLONE_SCRIPTS,
     COUNT_JS,
     EXAMPLES,
+    GENERATE_JS,
     INTRO_HTML,
     PLAYER_HTML,
     PRIVACY_HTML,
     SETTINGS_HEAD_HTML,
-    SPEAK_JS,
-    STOP_JS,
     TITLE,
     TRANSCRIPT_HELP,
     header_html,
@@ -96,18 +95,21 @@ def build_theme() -> gr.themes.Base:
 
 
 def player_js(*, stream_path: str = STREAM_PATH, model_loaded: bool = False) -> str:
-    """``player.js``, wrapped as the browser-side handler for a Gradio load event.
+    """``player.js`` and ``switch.js``, wrapped as the browser-side handler for a load event.
 
-    The settings it reads are written just before it, rather than templated into it, so the file
-    stays a plain script that a person can read and a linter could check.
+    The settings the player reads are written just before it, rather than templated into it, so
+    both files stay plain scripts that a person can read and a linter could check.
     """
-    source = Path(__file__).with_name("player.js").read_text(encoding="utf-8")
+    here = Path(__file__).parent
+    source = "\n".join(
+        (here / name).read_text(encoding="utf-8") for name in ("player.js", "switch.js")
+    )
     return (
         "() => {\n"
         f"  window.KOVA_STREAM_PATH = {json.dumps(stream_path)};\n"
         f"  window.KOVA_MAX_CHARS = {MAX_CHARS};\n"
         f"  window.KOVA_MODEL_LOADED = {json.dumps(bool(model_loaded))};\n"
-        # Gradio re-runs a load handler on every connection; the player is a singleton.
+        # Gradio re-runs a load handler on every connection; the page's scripts run once.
         "  if (window.kovaDemo) return;\n"
         f"{source}\n"
         "}"
@@ -189,11 +191,11 @@ def build_ui(
                         elem_id="kova-settings",
                         elem_classes=[*_TOGGLE, "kova-icon-only"],
                     )
-                    speak_button = gr.Button(
-                        "Speak", elem_id="kova-speak", elem_classes=["kova-btn", "kova-primary"]
-                    )
-                    stop_button = gr.Button(
-                        "Stop", elem_id="kova-stop", elem_classes=["kova-btn", "kova-dark"]
+                    # Stateless: every press starts a fresh generation, replacing one in flight.
+                    generate_button = gr.Button(
+                        "Generate",
+                        elem_id="kova-generate",
+                        elem_classes=["kova-btn", "kova-primary"],
                     )
 
                 # Which voice within the source, on a line of its own so the toolbar keeps its
@@ -386,7 +388,8 @@ def build_ui(
                 *preset_values(name),
                 gr.Row(visible=ref is not None),
                 gr.update(value=ref[0] if ref else None),
-                f"*Reference transcript:* “{ref[1]}”" if ref else "",
+                # Two paragraphs: the stylesheet turns the first into the card's heading.
+                f"Reference transcript\n\n“{ref[1]}”" if ref else "",
             )
 
         def picker_for(chosen_source: str, value: str | None = None) -> tuple[Any, ...]:
@@ -460,12 +463,11 @@ def build_ui(
             follows = (typed or "").strip() == (shown or "").strip()
             return nxt, (nxt if follows else gr.update())
 
-        # The Speak button hands the control values straight to the player; a Gradio event in
+        # The Generate button hands the control values straight to the player; a Gradio event in
         # the middle could only re-encode the audio or hold it back.
         controls = [text, voice, temperature, top_p, top_k, repetition_penalty, max_tokens]
-        speak_button.click(None, controls, None, js=SPEAK_JS)
-        text.submit(None, controls, None, js=SPEAK_JS)
-        stop_button.click(None, None, None, js=STOP_JS)
+        generate_button.click(None, controls, None, js=GENERATE_JS)
+        text.submit(None, controls, None, js=GENERATE_JS)
         text.change(None, text, None, js=COUNT_JS)
 
         # Opening a panel or dealing an example touches no model, so none of it queues behind

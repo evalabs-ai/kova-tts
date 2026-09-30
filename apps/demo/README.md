@@ -37,7 +37,7 @@ box.
 
 **The prompt box.** Type, or press **Random** for one of the example prompts. The character
 count sits beside it. The toolbar underneath holds a four-way switch for the voice source, the
-settings button and **Speak**, and keeps that shape whatever is picked. The voice is chosen in two
+settings button and **Generate**, and keeps that shape whatever is picked. The voice is chosen in two
 steps: a source on the switch, then a voice within it on the line below —
 
 | Source | What it is |
@@ -48,8 +48,9 @@ steps: a source on the switch, then a voice within it on the line below —
 | Professional cloning | a LoRA adapter from `--lora-dir` / `KOVA_LORA_DIR`; with none installed, picking it says how to add one |
 
  Sound starts after the first ~390 ms frame is decoded and runs continuously to the end
-of the utterance, while the later sentences are still being generated. While it does, Speak
-becomes **Stop**, which halts it at once and leaves everything ready to go again.
+of the utterance, while the later sentences are still being generated. **Generate** always
+starts over: pressing it mid-run drops the current clip and synthesizes the box's text afresh,
+with whatever voice and settings are picked now.
 
 **The player** draws the clip as a waveform: bars fill in as audio arrives, turn teal as they are
 heard, and the rest of the bar stays flat until it has been generated. Once the generation
@@ -123,6 +124,7 @@ is a FastAPI app underneath, so `build_app()` mounts the Blocks inside one of it
 | `streaming.py` | The `/v1/tts/stream` endpoint the player pulls audio from. |
 | `ui.py` | `build_ui()` — the prompt box, its panels and callbacks — and `build_theme()`. |
 | `player.js` | The browser half: SSE in, Web Audio out, the waveform, and the finished clip and the wav. |
+| `switch.js` | Slides the voice-source switch's highlight onto the picked source. |
 | `kova-logo.svg` | The Kova wordmark, inlined into the header. |
 
 `app.py` puts its own directory on `sys.path` when it is imported, so the modules beside it are

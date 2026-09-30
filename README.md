@@ -67,7 +67,7 @@ uv run kova-tts demo --preload
 Kova TTS on http://127.0.0.1:7860
 ```
 
-Open it, type something, press **Speak**. Audio starts playing while the rest is still being
+Open it, type something, press **Generate**. Audio starts playing while the rest is still being
 generated — about a quarter of a second in on a warm CUDA box, not after the clip is finished.
 `--preload` loads the weights at startup so the first press pays none of that; without it the
 first generation takes a few seconds longer and every one after is the same.

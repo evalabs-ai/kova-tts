@@ -82,7 +82,7 @@ def load_presets(directory: str | os.PathLike[str] | None) -> dict[str, tuple[Pa
 
 
 #: Seconds a second request waits for the model before it is refused. The overwhelmingly common
-#: collision is one person pressing Speak again: the previous request is abandoned a moment
+#: collision is one person pressing Generate again: the previous request is abandoned a moment
 #: earlier and its engine is still being released. Waiting turns that into a request that works.
 BUSY_TIMEOUT = 5.0
 
@@ -414,8 +414,8 @@ class DemoSession:
         used = min(seconds, MAX_REFERENCE_SECONDS)
         heard = "transcribed automatically" if auto else "as typed"
         return (
-            f"Cloned **{voice.name}** from {used:.1f} s of audio. It is selected on the Speak "
-            f"tab now.\n\nReference transcript ({heard}): “{voice.ref_text}”",
+            f"Cloned **{voice.name}** from {used:.1f} s of audio, and it is selected -- press "
+            f"Generate to hear it.\n\nReference transcript ({heard}): “{voice.ref_text}”",
             voice.name,
         )
 

@@ -14,8 +14,8 @@
  * -- not a timer, and not the network -- decide when each frame is heard.
  *
  * app.py loads this file and runs it once per page load, which installs `window.kovaDemo`. The
- * Speak and Stop buttons are ordinary Gradio buttons whose click handlers are pure JavaScript;
- * they share one slot in the toolbar, and `data-kova-busy` on <body> says which one shows.
+ * Generate button is an ordinary Gradio button whose click handler is pure JavaScript. It is
+ * stateless: every press starts a new generation, and `speak` stops whatever was running first.
  */
 
 (function () {
@@ -543,11 +543,6 @@
         const toggle = element("kova-toggle");
         const seek = element("kova-seek");
         paintWave(total, position);
-        // Speak and Stop share a slot in the toolbar; this is what the stylesheet reads.
-        document.body.toggleAttribute(
-            "data-kova-busy",
-            Boolean(active) || (!onClip && player.sources.length > 0),
-        )
         if (elapsed) elapsed.textContent = label;
         if (root) {
             root.toggleAttribute("data-playing", isPlaying);
@@ -732,7 +727,7 @@
     async function speak(options) {
         const text = (options.text || "").trim();
         if (!text) {
-            setStatus("Type something for the model to say, then press Speak.");
+            setStatus("Type something for the model to say, then press Generate.");
             return;
         }
         if (text.length > MAX_CHARS) {
@@ -743,8 +738,9 @@
             return;
         }
 
-        // A press while a run is in flight replaces it, rather than colliding with it: the
-        // abort closes the server's generator, which releases the engine for this request.
+        // Generate is stateless: a press while a run is in flight replaces it, rather than
+        // colliding with it. The abort closes the server's generator, which releases the engine
+        // for this request.
         stop({ quiet: true });
 
         const controller = new AbortController();
@@ -953,7 +949,7 @@
         );
     }
 
-    // Browsers keep an AudioContext suspended until a gesture. Speak is a gesture, but priming
+    // Browsers keep an AudioContext suspended until a gesture. Generate is a gesture, but priming
     // on the first pointer event means the hardware is awake before the first frame arrives.
     document.addEventListener("pointerdown", () => player.unlock(), { once: true, capture: true });
 
