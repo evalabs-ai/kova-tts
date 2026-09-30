@@ -19,7 +19,7 @@ import random
 import threading
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 
@@ -49,6 +49,11 @@ PRESET_MANIFEST = "metadata.csv"
 
 _AUDIO_SUFFIXES = (".flac", ".wav", ".ogg", ".opus", ".mp3")
 
+#: The published LoRA voices, offered under professional cloning when nothing else is configured.
+DEFAULT_VOICES_REPO = "kova-ai/kova-tts-1-voices"
+#: All the demo needs from a voices repo: each adapter, not the licences and README beside them.
+_ADAPTER_FILES = ["*/adapter_config.json", "*/adapter_model.safetensors"]
+
 #: Where a voice comes from. The prompt box picks one of these first, then a voice within it.
 #: In order of the effort behind the voice; professional cloning is a trained LoRA adapter.
 SOURCE_BASE = "Base model"
@@ -58,13 +63,49 @@ SOURCE_LORA = "Professional cloning"
 SOURCES = (SOURCE_BASE, SOURCE_PRESET, SOURCE_CLONE, SOURCE_LORA)
 
 
-def load_presets(directory: str | os.PathLike[str] | None) -> dict[str, tuple[Path, str]]:
-    """``{preset id: (audio path, transcript)}`` from ``<directory>/metadata.csv``.
+class Preset(NamedTuple):
+    """One zero-shot preset: its reference clip, the clip's exact transcript, and how to list it."""
 
-    The CSV needs a ``file_name`` and a ``text`` column; any others ride along unread. The id is
-    the file's stem. A row with no text, or whose audio file is missing, is skipped rather than
-    guessed at: a zero-shot reference whose text does not match the audio garbles everything
-    generated from it.
+    audio: Path
+    transcript: str
+    gender: str = ""
+    #: A few words that set the voice apart, e.g. ``("British", "gravelly", "storyteller")``.
+    tags: tuple[str, ...] = ()
+    #: 0-10, best first in the picker. ``None`` sorts after every rated preset.
+    rating: int | None = None
+
+
+def resolve_lora_dir(value: str | None) -> str | None:
+    """The LoRA directory to serve: `value`, else ``KOVA_LORA_DIR``, else the published voices.
+
+    A Hub repo id is downloaded (adapters only) and its local snapshot returned; ``''`` means no
+    LoRA voices at all. A download that fails leaves professional cloning empty rather than
+    stopping the page: the other three sources still work.
+    """
+    if value is None:
+        paths.load_dotenv()
+        value = os.environ.get(paths.ENV_LORA_DIR, "").strip() or DEFAULT_VOICES_REPO
+    if not value:
+        return None
+    if value.startswith(("/", "~", ".")) or Path(value).expanduser().exists():
+        return value
+    from huggingface_hub import snapshot_download
+
+    try:
+        return snapshot_download(value, allow_patterns=_ADAPTER_FILES)
+    except Exception as exc:  # noqa: BLE001 - no LoRA voices is a smaller demo, not a broken one
+        log.warning("Could not download LoRA voices from %s: %s", value, exc)
+        return None
+
+
+def load_presets(directory: str | os.PathLike[str] | None) -> dict[str, Preset]:
+    """``{preset id: Preset}`` from ``<directory>/metadata.csv``, best-rated first.
+
+    The CSV needs a ``file_name`` and a ``text`` column. ``gender``, ``tags`` (``;``-separated)
+    and ``rating`` (0-10) are optional and only change how the picker lists the preset; any other
+    column rides along unread. The id is the file's stem. A row with no text, or whose audio file
+    is missing, is skipped rather than guessed at: a zero-shot reference whose text does not
+    match the audio garbles everything generated from it.
     """
     if directory is None:
         return {}
@@ -77,8 +118,20 @@ def load_presets(directory: str | os.PathLike[str] | None) -> dict[str, tuple[Pa
             audio = Path(directory) / (row.get("file_name") or "").strip()
             transcript = (row.get("text") or "").strip()
             if transcript and audio.suffix.lower() in _AUDIO_SUFFIXES and audio.is_file():
-                presets[audio.stem] = (audio, transcript)
-    return dict(sorted(presets.items()))
+                rating = (row.get("rating") or "").strip()
+                presets[audio.stem] = Preset(
+                    audio,
+                    transcript,
+                    gender=(row.get("gender") or "").strip(),
+                    tags=tuple(t.strip() for t in (row.get("tags") or "").split(";") if t.strip()),
+                    rating=int(float(rating)) if rating else None,
+                )
+
+    def best_first(item: tuple[str, Preset]) -> tuple[int, str]:
+        rating = item[1].rating
+        return (-(rating if rating is not None else -1), item[0])
+
+    return dict(sorted(presets.items(), key=best_first))
 
 
 #: Seconds a second request waits for the model before it is refused. The overwhelmingly common
@@ -220,17 +273,26 @@ class DemoSession:
         return SOURCE_LORA
 
     def preset_label(self, preset_id: str) -> str:
-        """``voice_07 · "The train station smelled…"`` -- the text is what tells presets apart."""
-        text = self._presets[preset_id][1]
-        short = text if len(text) <= 48 else text[:47].rsplit(" ", 1)[0] + "…"
-        return f"{preset_id} · “{short}”"
+        """``07 · Female · British, crisp, storyteller`` when the manifest tags the preset.
+
+        Untagged, the transcript is what tells presets apart: ``voice_07 · "The train
+        station smelled…"``. The rating only orders the list; it is never shown.
+        """
+        preset = self._presets[preset_id]
+        if not (preset.gender or preset.tags):
+            text = preset.transcript
+            short = text if len(text) <= 48 else text[:47].rsplit(" ", 1)[0] + "…"
+            return f"{preset_id} · “{short}”"
+        number = preset_id.rsplit("_", 1)[-1]
+        parts = [number, preset.gender.capitalize(), ", ".join(preset.tags)]
+        return " · ".join(p for p in parts if p)
 
     def preset_reference(self, name: str | None) -> tuple[str, str] | None:
         """``(audio path, transcript)`` behind a preset picker value, for the preview player."""
         if not name or not name.startswith(PRESET_PREFIX):
             return None
         found = self._presets.get(name.removeprefix(PRESET_PREFIX))
-        return (str(found[0]), found[1]) if found else None
+        return (str(found.audio), found.transcript) if found else None
 
     def resolve(self, name: str | None) -> str | Voice | None:
         """The voice picker's value as the engine wants it: a clone, a LoRA name, or ``None``.
@@ -250,9 +312,9 @@ class DemoSession:
                 raise server_errors.InvalidRequest(
                     f"voice: no zero-shot preset named {preset_id!r}"
                 )
-            audio, transcript = self._presets[preset_id]
+            preset = self._presets[preset_id]
             self._preset_voices[preset_id] = self.engine().clone(
-                str(audio), transcript, name=PRESET_PREFIX + preset_id
+                str(preset.audio), preset.transcript, name=PRESET_PREFIX + preset_id
             )
         return self._preset_voices[preset_id]
 

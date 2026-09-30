@@ -39,12 +39,24 @@ from content import (
     PLAYER_HTML,
     PRIVACY_HTML,
     SETTINGS_HEAD_HTML,
+    SOURCE_NOTE_BASE,
+    SOURCE_NOTE_CLONE,
+    SOURCE_NOTE_LORA,
+    SOURCE_NOTE_PRESET,
     TITLE,
     TRANSCRIPT_HINT,
     TRANSCRIPT_PLACEHOLDER,
     header_html,
 )
-from session import BASE_VOICE, SOURCE_BASE, SOURCE_CLONE, SOURCE_LORA, DemoSession, load_engine
+from session import (
+    BASE_VOICE,
+    SOURCE_BASE,
+    SOURCE_CLONE,
+    SOURCE_LORA,
+    SOURCE_PRESET,
+    DemoSession,
+    load_engine,
+)
 from streaming import MAX_CHARS, STREAM_PATH
 
 #: Both audio players' waveforms, in the page's palette rather than Gradio's lavender: warm
@@ -54,6 +66,19 @@ _WAVEFORM = gr.WaveformOptions(waveform_color="#c4bdb0", waveform_progress_color
 #: Classes for the toolbar buttons that open a panel, closed and open.
 _TOGGLE = ["kova-btn"]
 _TOGGLE_ON = ["kova-btn", "kova-on"]
+
+_SOURCE_NOTES = {
+    SOURCE_BASE: SOURCE_NOTE_BASE,
+    SOURCE_PRESET: SOURCE_NOTE_PRESET,
+    SOURCE_CLONE: SOURCE_NOTE_CLONE,
+    SOURCE_LORA: SOURCE_NOTE_LORA,
+}
+
+
+def source_note_html(source: str | None) -> str:
+    """The line under the source switch saying what that kind of voice is."""
+    note = _SOURCE_NOTES.get(source or SOURCE_BASE, "")
+    return f'<p class="kova-source-note">{note}</p>' if note else ""
 
 
 def build_theme() -> gr.themes.Base:
@@ -205,6 +230,10 @@ def build_ui(
                         elem_id="kova-generate",
                         elem_classes=["kova-btn", "kova-primary"],
                     )
+
+                source_note = gr.HTML(
+                    source_note_html(SOURCE_BASE), padding=False, elem_id="kova-source-note"
+                )
 
                 # Which voice within the source, on a line of its own so the toolbar keeps its
                 # shape whatever the source. Hidden for the base model, which has exactly one.
@@ -533,6 +562,8 @@ def build_ui(
         # the picker itself, which .input (unlike .change) leaves alone.
         by_source = [voice, voice_row, record_more, lora_hint, clone_hint, clone_panel]
         source.input(picker_for, source, by_source, **instant)
+        # .change, not .input: cloning a voice switches the source too, and the note follows.
+        source.change(source_note_html, source, source_note, **instant)
         reset.click(preset_values, voice, sliders, **instant)
         another_script.click(on_another_script, clone_script, clone_script, **instant)
         # Showing the right card is instant; transcribing a clip already recorded is not.

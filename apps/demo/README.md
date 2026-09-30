@@ -18,7 +18,8 @@ Then open <http://127.0.0.1:7860>.
 | `--share` | expose a temporary public `gradio.live` link |
 | `--open` | open a browser window on startup |
 | `--preload` | load the weights at startup rather than on the first generation |
-| `--model` / `--codec` / `--wavlm` / `--lora-dir` | override the configured paths |
+| `--model` / `--codec` / `--wavlm` | override the configured paths |
+| `--lora-dir` | LoRA voices for professional cloning: a directory or a Hub repo id (default: `KOVA_LORA_DIR`, else the published [`kova-ai/kova-tts-1-voices`](https://huggingface.co/kova-ai/kova-tts-1-voices), adapters only); `''` for none |
 | `--zero-shot-dir` | zero-shot presets to offer (default: the bundled [`zero_shot_voices/`](zero_shot_voices/README.md)); `''` for none |
 | `--device` | e.g. `cuda:1` or `mps` |
 | `--backend` | `auto`, `torch` or `mlx`; the default reads it off the checkpoint |

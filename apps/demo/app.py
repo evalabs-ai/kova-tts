@@ -55,6 +55,7 @@ from session import (  # noqa: E402
     BASE_LABEL,
     BASE_VOICE,
     BUSY_TIMEOUT,
+    DEFAULT_VOICES_REPO,
     DEFAULT_ZERO_SHOT_DIR,
     PRESET_PREFIX,
     SOURCE_BASE,
@@ -66,6 +67,7 @@ from session import (  # noqa: E402
     build_transcriber,
     load_engine,
     load_presets,
+    resolve_lora_dir,
     warm_up,
 )
 from streaming import MAX_CHARS, STREAM_PATH, add_stream_route  # noqa: E402
@@ -83,6 +85,7 @@ __all__ = [
     "CLONE_READ",
     "CLONE_SAMPLING",
     "CSS",
+    "DEFAULT_VOICES_REPO",
     "DEFAULT_ZERO_SHOT_DIR",
     "EXAMPLES",
     "MAX_CHARS",
@@ -104,6 +107,7 @@ __all__ = [
     "load_engine",
     "load_presets",
     "main",
+    "resolve_lora_dir",
     "player_js",
     "warm_up",
 ]
@@ -171,7 +175,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default=None, help="model directory or Hub repo id")
     parser.add_argument("--codec", default=None, help="codec checkpoint")
     parser.add_argument("--wavlm", default=None, help="WavLM directory or Hub repo id")
-    parser.add_argument("--lora-dir", default=None, help="directory of LoRA voices")
+    parser.add_argument(
+        "--lora-dir",
+        default=None,
+        help="directory of LoRA voices, or a Hub repo id to download them from (default: "
+        f"KOVA_LORA_DIR, else {DEFAULT_VOICES_REPO}); pass '' for none",
+    )
     parser.add_argument(
         "--zero-shot-dir",
         default=str(DEFAULT_ZERO_SHOT_DIR),
@@ -243,6 +252,7 @@ def main(argv: list[str] | None = None) -> int:
     # One Parakeet for the whole page: the clone panel's live transcript and the engine's
     # fallback when Clone is pressed with an empty box.
     transcriber = build_transcriber(device=args.device)
+    args.lora_dir = resolve_lora_dir(args.lora_dir)
     session = DemoSession(
         loader=lambda: load_engine(
             model=args.model,
