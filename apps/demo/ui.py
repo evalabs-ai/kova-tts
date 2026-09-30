@@ -28,7 +28,9 @@ import gradio as gr
 from kova_tts import TTS_SAMPLING
 
 from content import (
+    CLONE_FREE,
     CLONE_HEAD_HTML,
+    CLONE_READ,
     CLONE_SCRIPTS,
     COUNT_JS,
     EXAMPLES,
@@ -38,7 +40,8 @@ from content import (
     PRIVACY_HTML,
     SETTINGS_HEAD_HTML,
     TITLE,
-    TRANSCRIPT_HELP,
+    TRANSCRIPT_HINT,
+    TRANSCRIPT_PLACEHOLDER,
     header_html,
 )
 from session import BASE_VOICE, SOURCE_BASE, SOURCE_CLONE, SOURCE_LORA, DemoSession, load_engine
@@ -185,6 +188,7 @@ def build_ui(
                         container=False,
                         label="Voice source",
                         elem_id="kova-source",
+                        elem_classes=["kova-switch"],
                     )
                     settings = gr.Button(
                         "Settings",
@@ -259,8 +263,19 @@ def build_ui(
                             elem_classes=["kova-btn", "kova-plain", "kova-icon-only"],
                             scale=0,
                         )
+                    # Read the passage, whose text is then the transcript, or say anything / bring
+                    # a file, and have it transcribed.
+                    clone_mode = gr.Radio(
+                        choices=[CLONE_READ, CLONE_FREE],
+                        value=CLONE_READ,
+                        show_label=False,
+                        container=False,
+                        label="How to clone",
+                        elem_id="kova-clone-mode",
+                        elem_classes=["kova-switch"],
+                    )
                     with gr.Row(elem_id="kova-clone-row"):
-                        with gr.Column(elem_id="kova-script-card"):
+                        with gr.Column(elem_id="kova-script-card") as script_card:
                             with gr.Row(equal_height=True):
                                 gr.HTML(
                                     '<span class="kova-eyebrow">Read aloud</span>', padding=False
@@ -279,11 +294,27 @@ def build_ui(
                                 interactive=False,
                                 elem_id="kova-script",
                             )
+                        # Freestyle's stand-in for the passage: what the clip says, filled in by
+                        # ASR the moment it arrives and editable for checking.
+                        with gr.Column(visible=False, elem_id="kova-transcript-card") as (
+                            transcript_card
+                        ):
+                            gr.HTML('<span class="kova-eyebrow">Transcript</span>', padding=False)
+                            clone_transcript = gr.Textbox(
+                                show_label=False,
+                                container=False,
+                                label="Transcript",
+                                lines=4,
+                                placeholder=TRANSCRIPT_PLACEHOLDER,
+                                elem_id="kova-transcript",
+                            )
+                            gr.HTML(f'<p class="kova-note">{TRANSCRIPT_HINT}</p>', padding=False)
                         # The recording in its card, and naming it on a line of its own beneath.
                         with gr.Column(elem_id="kova-record-side"):
                             with gr.Column(elem_id="kova-record-card"):
+                                # Read aloud is the microphone's; a file joins it in freestyle.
                                 reference = gr.Audio(
-                                    sources=["microphone", "upload"],
+                                    sources=["microphone"],
                                     type="filepath",
                                     label="Your recording",
                                     elem_id="kova-reference",
@@ -303,21 +334,6 @@ def build_ui(
                                     elem_classes=["kova-btn", "kova-primary", "kova-no-icon"],
                                     scale=0,
                                 )
-                    with gr.Accordion(
-                        "Using your own recording? Check the transcript",
-                        open=False,
-                        elem_id="kova-transcript-box",
-                    ) as transcript_box:
-                        gr.Markdown(TRANSCRIPT_HELP)
-                        # Prefilled with the script and still editable, so reading the script
-                        # needs no typing while an uploaded clip can have its own transcript.
-                        clone_transcript = gr.Textbox(
-                            label="Transcript",
-                            value=CLONE_SCRIPTS[0],
-                            lines=3,
-                            info="What the recording says, word for word.",
-                            elem_id="kova-transcript",
-                        )
                     clone_status = gr.Markdown("", elem_id="kova-clone-status")
                     gr.HTML(PRIVACY_HTML, padding=False)
 
@@ -435,38 +451,57 @@ def build_ui(
         def open_clone_panel() -> tuple[Any, Any]:
             return gr.Column(visible=True), gr.Row(visible=False)
 
-        def on_clone(*values: Any) -> tuple[Any, ...]:
-            message, cloned = session.clone_voice(*values)
+        def on_clone(
+            reference: str | None, mode: str, script: str, typed: str, name: str
+        ) -> tuple[Any, ...]:
+            # Reading aloud, the passage is the transcript; freestyle, it is the checked box.
+            transcript = script if mode == CLONE_READ else typed
+            message, cloned = session.clone_voice(reference, transcript, name)
             if cloned is None:
                 # The panel stays open, with the reason in it, for another try.
-                return message, *(gr.update(),) * 8
-            # Land the user where the new voice is usable: panel closed, voice already selected.
+                return message, *(gr.update(),) * 10
+            # Land the user where the new voice is usable: panel closed, voice already selected,
+            # and the panel emptied -- its message too -- so New recording starts a fresh take.
             return (
-                message,
+                "",
                 gr.update(value=SOURCE_CLONE),
                 *picker_for(SOURCE_CLONE, cloned),
-                gr.update(),
+                None,
+                "",
+                "",
             )
 
-        def on_reference(path: str | None) -> tuple[Any, Any, Any]:
-            """Transcribe a recording the moment it arrives, so the box holds what was said."""
+        def show_mode(mode: str) -> tuple[Any, Any, Any]:
+            """The passage or the transcript card, and the recorder's sources, for one mode."""
+            free = mode == CLONE_FREE
+            return (
+                gr.Column(visible=not free),
+                gr.Column(visible=free),
+                gr.update(sources=["microphone", "upload"] if free else ["microphone"]),
+            )
+
+        def transcribe(mode: str, path: str | None, typed: str) -> tuple[Any, Any]:
+            """Fill the freestyle transcript from the clip, unless one is already there.
+
+            Runs when a clip arrives and when freestyle is picked with a clip already recorded.
+            Reading aloud needs none of it, and a transcript someone has typed is never replaced.
+            """
+            if mode != CLONE_FREE or not path or (typed or "").strip():
+                return gr.update(), gr.update()
             status, heard = session.transcribe_reference(path)
             if heard is None:
-                return status, gr.update(), gr.update()
-            # Open the transcript, so it gets checked before Clone is pressed.
-            return status, heard, gr.Accordion(open=True)
+                return status, gr.update()
+            # The card's own note already says to check it; the status line is for trouble.
+            return "", heard
 
-        def on_another_script(shown: str, typed: str) -> tuple[Any, Any]:
-            """Rotate to the next script, keeping the transcript in step with it.
+        def on_arrival(mode: str, path: str | None) -> tuple[Any, Any]:
+            """A new clip replaces whatever the last one was heard to say."""
+            return transcribe(mode, path, "")
 
-            The transcript only follows along while it still matches the script on display.
-            Someone who has pasted their own recording's transcript must not lose it to a
-            misplaced click.
-            """
+        def on_another_script(shown: str) -> str:
+            """Rotate to the next passage."""
             index = CLONE_SCRIPTS.index(shown) if shown in CLONE_SCRIPTS else -1
-            nxt = CLONE_SCRIPTS[(index + 1) % len(CLONE_SCRIPTS)]
-            follows = (typed or "").strip() == (shown or "").strip()
-            return nxt, (nxt if follows else gr.update())
+            return CLONE_SCRIPTS[(index + 1) % len(CLONE_SCRIPTS)]
 
         # The Generate button hands the control values straight to the player; a Gradio event in
         # the middle could only re-encode the audio or hold it back.
@@ -493,29 +528,28 @@ def build_ui(
         by_source = [voice, voice_row, record_more, lora_hint, clone_hint, clone_panel]
         source.input(picker_for, source, by_source, **instant)
         reset.click(preset_values, voice, sliders, **instant)
-        another_script.click(
-            on_another_script,
-            [clone_script, clone_transcript],
-            [clone_script, clone_transcript],
-            **instant,
+        another_script.click(on_another_script, clone_script, clone_script, **instant)
+        # Showing the right card is instant; transcribing a clip already recorded is not.
+        clone_mode.input(
+            show_mode, clone_mode, [script_card, transcript_card, reference], **instant
+        ).then(
+            transcribe,
+            [clone_mode, reference, clone_transcript],
+            [clone_status, clone_transcript],
+            show_progress="minimal",
         )
         clone_button.click(
             on_clone,
-            [reference, clone_transcript, clone_name],
-            [
-                clone_status,
-                source,
-                *by_source,
-                transcript_box,
-            ],
+            [reference, clone_mode, clone_script, clone_transcript, clone_name],
+            [clone_status, source, *by_source, reference, clone_transcript, clone_name],
             concurrency_limit=1,
         )
         # Both ways a clip arrives. Not .change: that also fires when the clip is cleared.
         for arrival in (reference.stop_recording, reference.upload):
             arrival(
-                on_reference,
-                reference,
-                [clone_status, clone_transcript, transcript_box],
+                on_arrival,
+                [clone_mode, reference],
+                [clone_status, clone_transcript],
                 show_progress="minimal",
             )
 

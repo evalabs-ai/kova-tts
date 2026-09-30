@@ -65,19 +65,19 @@ voice calls for — the cloning preset differs only in giving the model a larger
 "Reset to preset" puts them back. You should not have to open this panel at all.
 
 **Cloning** happens in a panel inside the prompt box. Picking **Your recording** opens it while
-nothing has been cloned; after that, **New recording** beside the voice picker opens it again.
-It shows a short passage to read aloud, with the transcript already filled in to match it —
-record yourself reading it, name it, press Clone, and there is nothing to type and nothing to
-transcribe. "Another" rotates through
-the passages, and leaves a transcript you typed yourself alone. When the clone is ready the panel
-closes and the new voice is already selected.
+nothing has been cloned; after that, **New recording** beside the voice picker opens it again. A
+switch at the top of the panel picks how the reference comes in:
 
-Bringing your own recording works too. Any recording or upload is transcribed the moment it
-arrives — NVIDIA Parakeet TDT (`nvidia/parakeet-tdt-0.6b-v3`, via transformers; override with
-`KOVA_DEMO_ASR_MODEL`) — and the transcript opens, filled in with what was actually said. Check
-it before cloning: cloning *continues* the reference, and a transcript that does not match
-garbles the output. Clones live in memory for the life of the process and are never written to
-disk.
+| Mode | What you do | Where the transcript comes from |
+|---|---|---|
+| Read aloud | record yourself reading the passage shown; "Another" swaps it | the passage itself — nothing to type, nothing transcribed |
+| Freestyle or upload | say anything into the microphone, or upload a clip | transcribed the moment the clip arrives, into a box you can edit |
+
+Freestyle transcription is NVIDIA Parakeet TDT (`nvidia/parakeet-tdt-0.6b-v3`, via transformers;
+override with `KOVA_DEMO_ASR_MODEL`). Check the transcript before cloning: cloning *continues*
+the reference, and a transcript that does not match garbles the output. Name the voice, press
+Clone, and the panel closes with the new voice already selected. Clones live in memory for the
+life of the process and are never written to disk.
 
 Uploads land in a per-user `GRADIO_TEMP_DIR` (`$TMPDIR/gradio-<user>`) rather than Gradio's
 shared `/tmp/gradio`: on a machine where another user ran Gradio first, that directory is theirs

@@ -36,16 +36,19 @@ EXAMPLES = [
 ]
 
 CLONE_INTRO = (
-    "Record yourself reading the passage — about 15 seconds. The new voice is selected as soon "
-    "as it is ready."
+    "About 15 seconds of your voice is enough. The new voice is selected as soon as it is ready."
 )
 
-TRANSCRIPT_HELP = """\
-Reading the passage? The transcript already matches it. Bringing your own recording? It is
-transcribed automatically (NVIDIA Parakeet) as soon as it arrives, and the box below fills in
-with what was said. Check it before cloning: cloning *continues* the reference, so a transcript
-that does not match the audio word for word garbles the output.
-"""
+#: The two ways to give the clone its reference, as the clone panel's switch offers them. Reading
+#: the passage needs no transcription: the passage is the transcript.
+CLONE_READ = "Read aloud"
+CLONE_FREE = "Freestyle or upload"
+
+TRANSCRIPT_PLACEHOLDER = "Record or upload a clip, and what it says appears here."
+TRANSCRIPT_HINT = (
+    "Transcribed automatically (NVIDIA Parakeet). Check it matches the clip word for word: "
+    "cloning continues the reference, so a mismatch garbles the output."
+)
 
 PRIVACY = "Clones stay in memory for this session only and are never written to disk."
 
@@ -272,51 +275,51 @@ body, gradio-app, .gradio-container, .main, .contain {{
 #kova-clone-close {{ --icon: {_CLOSE}; }}
 #kova-generate::before {{ width: 12px !important; height: 12px !important; }}
 
-/* The voice source: a segmented switch, one pill per source, the picked one raised. The
-   options' .wrap is the one holding the labels; Gradio's status tracker is a .wrap too. */
-   Gradio centres a container-less block with auto margins; in the toolbar those would split
-   the free space with the settings button's and float the switch off the left edge. */
-#kova-source {{ margin: 0 !important; padding: 0 !important; }}
-#kova-source .wrap:has(> label) {{
+/* Segmented switches -- the voice source, the clone panel's mode: one pill per option, the
+   picked one raised. The options' .wrap is the one holding the labels; Gradio's status tracker
+   is a .wrap too. Gradio centres a container-less block with auto margins, which in the toolbar
+   would split the free space with the settings button's and float the switch off the left. */
+#kova-main .kova-switch {{ margin: 0 !important; padding: 0 !important; }}
+#kova-main .kova-switch .wrap:has(> label) {{
   position: relative;
   display: flex; flex-wrap: nowrap; gap: 2px !important; height: 44px; box-sizing: border-box;
   padding: 3px; border: 1px solid var(--kova-line); border-radius: 999px;
   background: var(--kova-sunken);
 }}
-#kova-source label {{
+#kova-main .kova-switch label {{
   display: flex; align-items: center; justify-content: center; position: relative;
   margin: 0 !important; padding: 0 14px !important; border: none !important;
   border-radius: 999px !important; background: transparent !important; box-shadow: none !important;
   font-family: var(--kova-sans); font-size: 13px; font-weight: 500; white-space: nowrap;
   color: var(--kova-muted) !important; cursor: pointer; transition: background 150ms, color 150ms;
 }}
-#kova-source label:hover {{ color: var(--kova-ink) !important; }}
-#kova-source label.selected,
-#kova-source .kova-thumb {{
+#kova-main .kova-switch label:hover {{ color: var(--kova-ink) !important; }}
+#kova-main .kova-switch label.selected,
+#kova-main .kova-switch .kova-thumb {{
   background: var(--kova-surface) !important; color: var(--kova-ink) !important;
   box-shadow: 0 1px 3px rgba(42, 40, 38, 0.14) !important;
 }}
 /* switch.js slides one thumb behind the labels onto the picked one; once it is in, the picked
    label leaves the raised look to it. */
-#kova-source .kova-thumb {{
+#kova-main .kova-switch .kova-thumb {{
   position: absolute; top: 0; left: 0; z-index: 0; pointer-events: none;
   border-radius: 999px; opacity: 0;
   transition-property: transform, width, height; transition-duration: 280ms;
   transition-timing-function: cubic-bezier(0.3, 0.7, 0.3, 1);
 }}
-#kova-source .wrap:has(> label)[data-sliding] label.selected {{
+#kova-main .kova-switch .wrap:has(> label)[data-sliding] label.selected {{
   background: transparent !important; box-shadow: none !important;
 }}
-#kova-source label {{ z-index: 1; }}
+#kova-main .kova-switch label {{ z-index: 1; }}
 @media (prefers-reduced-motion: reduce) {{
-  #kova-source .kova-thumb {{ transition: none; }}
+  #kova-main .kova-switch .kova-thumb {{ transition: none; }}
 }}
 /* The radio itself stays in the page for keyboards and screen readers, just not on it. */
-#kova-source input[type=radio] {{
+#kova-main .kova-switch input[type=radio] {{
   position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0;
 }}
-#kova-source label:has(input:focus-visible) {{ outline: 2px solid var(--kova-teal); }}
-#kova-source label span {{ margin: 0 !important; }}
+#kova-main .kova-switch label:has(input:focus-visible) {{ outline: 2px solid var(--kova-teal); }}
+#kova-main .kova-switch label span {{ margin: 0 !important; }}
 
 #kova-voice {{ width: 320px !important; margin: 0 !important; }}
 #kova-voice .wrap {{
@@ -379,7 +382,9 @@ body, gradio-app, .gradio-container, .main, .contain {{
   margin: 4px 0 0; font-size: 13px; line-height: 1.5; color: var(--kova-muted);
 }}
 #kova-clone-row {{ gap: 16px !important; align-items: stretch; }}
-#kova-script-card, #kova-record-card {{
+/* The mode switch hugs its two options rather than spanning the panel. */
+#kova-clone-mode {{ align-self: flex-start; width: fit-content !important; }}
+#kova-script-card, #kova-transcript-card, #kova-record-card {{
   background: var(--kova-surface) !important; border: 1px solid var(--kova-line) !important;
   border-radius: 14px !important; padding: 14px 16px !important; gap: 10px !important;
 }}
@@ -479,12 +484,19 @@ body, gradio-app, .gradio-container, .main, .contain {{
   background: #fff !important; border: 1px solid var(--kova-line) !important;
   border-radius: 12px !important; font-family: var(--kova-sans); font-size: 15px;
 }}
+/* The freestyle transcript fills its card, like the passage it stands in for: every wrapper
+   Gradio puts between the card and the textarea stretches with it. */
+#kova-transcript-card > #kova-transcript, #kova-transcript *:has(textarea) {{
+  display: flex !important; flex-direction: column; flex: 1 1 auto !important;
+}}
+#kova-transcript textarea {{ flex: 1 1 auto; line-height: 1.55 !important; resize: none; }}
+.kova-note {{ margin: 0; font-size: 12px; line-height: 1.5; color: var(--kova-muted); }}
 /* The name sits beside Clone as a pill of the same height. */
 #kova-clone-name input, #kova-clone-name textarea {{
   box-sizing: border-box; height: 44px !important; min-height: 44px; padding: 11px 18px !important;
   border-radius: 999px !important; resize: none; overflow: hidden; line-height: 20px;
 }}
-#kova-clone-row label span, #kova-transcript-box span {{
+#kova-clone-row label span {{
   color: var(--kova-ink-2); font-size: 13px;
 }}
 #kova-clone-status {{ font-size: 14px; color: var(--kova-ink-2); }}
@@ -575,11 +587,13 @@ body, gradio-app, .gradio-container, .main, .contain {{
   #kova-toolbar {{ padding: 12px; }}
   /* Four pills do not fit a phone's width on one line: two by two. */
   #kova-toolbar > #kova-source {{ flex: 1 1 100% !important; width: 100% !important; }}
-  #kova-source .wrap:has(> label) {{
+  #kova-main #kova-source .wrap:has(> label) {{
     display: grid; grid-template-columns: 1fr 1fr; height: auto; border-radius: 22px;
   }}
-  #kova-source label {{ height: 36px; padding: 0 8px !important; border-radius: 18px !important; }}
-  #kova-source .kova-thumb {{ border-radius: 18px; }}
+  #kova-main #kova-source label {{
+    height: 36px; padding: 0 8px !important; border-radius: 18px !important;
+  }}
+  #kova-main #kova-source .kova-thumb {{ border-radius: 18px; }}
   #kova-voice-row {{ padding: 12px 12px 12px 16px !important; }}
   #kova-preview, #kova-empty-clones, #kova-empty-loras {{
     flex-direction: column; align-items: stretch;

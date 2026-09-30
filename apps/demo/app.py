@@ -50,7 +50,7 @@ from kova_tts.server.protocol import ErrorResponse  # noqa: E402
 # the path makes the plain imports below work in all of them.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from content import BUSY, CSS, EXAMPLES, HEAD, TITLE  # noqa: E402
+from content import BUSY, CLONE_FREE, CLONE_READ, CSS, EXAMPLES, HEAD, TITLE  # noqa: E402
 from session import (  # noqa: E402
     BASE_LABEL,
     BASE_VOICE,
@@ -79,6 +79,8 @@ __all__ = [
     "BASE_VOICE",
     "BUSY",
     "BUSY_TIMEOUT",
+    "CLONE_FREE",
+    "CLONE_READ",
     "CLONE_SAMPLING",
     "CSS",
     "DEFAULT_ZERO_SHOT_DIR",

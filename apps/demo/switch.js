@@ -1,13 +1,13 @@
 /**
- * The voice-source switch's sliding bubble.
+ * The segmented switches' sliding bubble: the voice source, and the clone panel's mode.
  *
- * The switch is a Gradio Radio styled as a row of pills (content.py). Gradio marks the picked
- * option by giving its label a `selected` class, so on its own the highlight would jump. Instead
- * one thumb sits behind the labels and is moved onto whichever is selected, and CSS animates the
- * move. It follows the class rather than clicks, so a source set from Python -- a finished clone
- * selects "Your recording" -- slides there too.
+ * Each is a Gradio Radio styled as a row of pills (content.py, `.kova-switch`). Gradio marks the
+ * picked option by giving its label a `selected` class, so on its own the highlight would jump.
+ * Instead one thumb sits behind the labels and is moved onto whichever is selected, and CSS
+ * animates the move. It follows the class rather than clicks, so a source set from Python -- a
+ * finished clone selects "Your recording" -- slides there too.
  *
- * Without this script the switch still works: the picked label keeps its own background, which
+ * Without this script the switches still work: the picked label keeps its own background, which
  * the stylesheet only hands over to the thumb once `data-sliding` is set here.
  */
 
@@ -49,12 +49,22 @@
         });
     }
 
-    // Gradio mounts the page after the load handler starts, so wait for the switch to exist.
-    const ready = setInterval(() => {
-        // The label's parent, not ".wrap": Gradio's status tracker is a .wrap as well.
-        const wrap = document.querySelector("#kova-source label")?.parentElement;
-        if (!wrap) return;
-        clearInterval(ready);
-        install(wrap);
-    }, 50);
+    // A switch can appear at any time: Gradio mounts the page after the load handler starts,
+    // and builds a hidden panel's contents -- the clone panel's switch -- only when it opens.
+    // Each options row gets its thumb once; a row Gradio rebuilds is a new row and gets its own.
+    // The label's parent rather than ".wrap": Gradio's status tracker is a .wrap as well.
+    let pending = false;
+    function scan() {
+        pending = false;
+        for (const label of document.querySelectorAll(".kova-switch label")) {
+            const wrap = label.parentElement;
+            if (wrap && !("sliding" in wrap.dataset)) install(wrap);
+        }
+    }
+    new MutationObserver(() => {
+        if (pending) return;
+        pending = true;
+        requestAnimationFrame(scan);
+    }).observe(document.body, { childList: true, subtree: true });
+    scan();
 })();

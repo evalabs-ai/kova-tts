@@ -217,6 +217,14 @@ def test_build_ui_constructs_without_launching(demo: Any) -> None:
         demo.SOURCE_LORA,
     ]
     assert [choice[1] for choice in by_id["kova-voice"].choices] == [demo.BASE_VOICE]
+    # Cloning opens on reading the passage, which only the microphone can do; a file comes with
+    # freestyle.
+    assert [choice[1] for choice in by_id["kova-clone-mode"].choices] == [
+        demo.CLONE_READ,
+        demo.CLONE_FREE,
+    ]
+    assert by_id["kova-clone-mode"].value == demo.CLONE_READ
+    assert by_id["kova-reference"].sources == ["microphone"]
     # Building the page must not generate anything -- cached examples would do exactly that,
     # and on a real engine it is a minute of synthesis before the first visitor arrives.
     assert not fake.calls
