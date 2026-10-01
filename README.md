@@ -1,11 +1,11 @@
 <div align="center">
-  <a href="https://kova.ai"><img src="https://huggingface.co/kova-ai/kova-tts-1/resolve/main/assets/kova-logo-text-ink.svg" alt="Kova" width="100%"></a>
+  <a href="https://kova.ai"><img src="assets/kova-logo-text-ink.svg" alt="Kova" width="100%"></a>
   <br>
-  <a href="https://huggingface.co/kova-ai/kova-tts-1"><img src="https://img.shields.io/badge/Hugging%20Face-kova--tts--1-FFD21E?logo=huggingface&logoColor=black" alt="Hugging Face"></a>
-  <a href="https://kova.ai"><img src="https://img.shields.io/badge/Website-kova.ai-6D28D9" alt="Website"></a>
-  <a href="https://discord.com/invite/tBw298ggQQ"><img src="https://img.shields.io/badge/Discord-Join%20us-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
-  <a href="https://www.linkedin.com/company/kova-tts/posts/?feedView=all"><img src="https://img.shields.io/badge/LinkedIn-Follow%20Kova-0A66C2" alt="LinkedIn"></a>
-  <a href="https://apps.apple.com/us/app/kova-ai-audio-series/id6744546041"><img src="https://img.shields.io/badge/App%20Store-Kova%20AI-000000?logo=apple&logoColor=white" alt="Download on the App Store"></a>
+  <a href="https://huggingface.co/kova-ai/kova-tts-1"><img src="assets/badges/huggingface.svg" alt="Hugging Face"></a>
+  <a href="https://kova.ai"><img src="assets/badges/website.svg" alt="Website"></a>
+  <a href="https://discord.com/invite/tBw298ggQQ"><img src="assets/badges/discord.svg" alt="Discord"></a>
+  <a href="https://www.linkedin.com/company/kova-tts/posts/?feedView=all"><img src="assets/badges/linkedin.svg" alt="LinkedIn"></a>
+  <a href="https://apps.apple.com/us/app/kova-ai-audio-series/id6744546041"><img src="assets/badges/app-store.svg" alt="Download on the App Store"></a>
 </div>
 
 > [!IMPORTANT]
@@ -25,7 +25,7 @@ We trained Kova TTS 1 specifically for audiobook reading: warm, natural, and ple
 > The licensed voice actor voices we use on [kova.ai](https://kova.ai) can't be published here, but we've documented exactly [how to clone a voice yourself](#-voice-cloning-and-pretrained-voices), so you can recreate that same special experience: your story, read by the voice of your dreams ✨
 
 <div align="center">
-  <img src="https://huggingface.co/kova-ai/kova-tts-1/resolve/main/assets/kova-tts-pricing-27.png" alt="Kova TTS cost per million characters compared with 27 TTS APIs" width="100%">
+  <img src="assets/kova-tts-pricing-27.png" alt="Kova TTS cost per million characters compared with 27 TTS APIs" width="100%">
   <br>
   <em>What it costs us to run Kova on rented GPUs, compared with API prices featured on Artificial Analysis.</em>
 </div>
