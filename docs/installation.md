@@ -6,8 +6,8 @@
 - [uv](https://docs.astral.sh/uv/). Everything below assumes it; `pip` works too, but uv is what
   the lockfile and the CI job use.
 - A CUDA GPU for anything interactive, or an Apple Silicon Mac — see
-  [Apple Silicon](apple-silicon.md), which needs its own checkpoint and gets you a little under
-  real time rather than several times it. The code runs on CPU too — the tests do — but
+  [Apple Silicon](apple-silicon.md). A Mac runs the published checkpoint as it is, under torch
+  on Metal, but well below real time; the faster MLX build is not published yet. The code runs on CPU too — the tests do — but
   generation is far slower than real time there, so a CPU box is for development, not for
   listening.
 - Model weights from Hugging Face, downloaded automatically or provided locally.
@@ -60,7 +60,8 @@ uv sync --extra server            # one extra
 uv sync --extra server --extra demo --extra data --extra finetune
 ```
 
-On Apple Silicon, add `--extra mlx` for the MLX backend. This extra is not available on Linux.
+On Apple Silicon no extra is needed for the published checkpoint, which runs under torch. Add
+`--extra mlx` only for an MLX-converted checkpoint. This extra is not available on Linux.
 `uv sync` prunes as well as installs: switching to `uv sync --extra demo` removes other extras.
 Name every extra you want in one command.
 

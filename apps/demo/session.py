@@ -520,9 +520,8 @@ class DemoSession:
             )
         elif device.startswith("mps") and self._backend != "mlx":
             lines.append(
-                "**Running the torch backend on Metal.** It works, at roughly a quarter of "
-                "real time. Point `KOVA_MODEL_PATH` at an MLX-converted checkpoint for the "
-                "fast path -- see `docs/apple-silicon.md`."
+                "**Running the torch backend on Metal.** It works, but an MLX checkpoint runs "
+                "a lot faster; an official one is coming soon. See `docs/apple-silicon.md`."
             )
 
         if self._tts is None:
