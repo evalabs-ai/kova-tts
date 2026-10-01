@@ -174,6 +174,44 @@ class TestMergeHelpers:
         with pytest.raises(ValueError, match="dtype must be one of"):
             merge.merge_adapter(tmp_path, tmp_path / "out", dtype="int4")
 
+    @pytest.mark.parametrize(
+        ("recorded", "expected"),
+        [
+            # A published voice records the Hub repo: use it, with no "does not exist" warning.
+            ("kova-ai/kova-tts-1", "kova-ai/kova-tts-1"),
+            # A path from another machine: fall back to the configured checkpoint.
+            ("/elsewhere/checkpoint", "configured-checkpoint"),
+        ],
+    )
+    def test_the_base_comes_from_the_adapter_or_the_configuration(
+        self, tmp_path, monkeypatch, caplog, recorded, expected
+    ):
+        adapter = tmp_path / "adapter"
+        adapter.mkdir()
+        (adapter / "adapter_config.json").write_text(
+            json.dumps({"base_model_name_or_path": recorded}), encoding="utf-8"
+        )
+        monkeypatch.setattr(
+            merge.paths, "model_path", lambda explicit=None: explicit or "configured-checkpoint"
+        )
+        loaded = []
+
+        class Stop(Exception):
+            pass
+
+        class FakeAuto:
+            @staticmethod
+            def from_pretrained(source, **_kwargs):
+                loaded.append(source)
+                raise Stop
+
+        monkeypatch.setattr(merge, "AutoModelForCausalLM", FakeAuto)
+        with caplog.at_level("WARNING"), pytest.raises(Stop):
+            merge.merge_adapter(adapter, tmp_path / "out")
+
+        assert loaded == [expected]
+        assert ("does not exist here" in caplog.text) == (expected == "configured-checkpoint")
+
 
 # ------------------------------------------------------------------------ end-to-end smoke
 

@@ -49,9 +49,10 @@ def merge_adapter(
 ) -> Path:
     """Merge `adapter` into its base model and save a standalone checkpoint to `output`.
 
-    `base_model` defaults to the path recorded in the adapter, then to the configured
+    `base_model` defaults to the base recorded in the adapter, then to the configured
     checkpoint -- an adapter trained on another machine records a path that does not exist here,
-    which is why the fallback exists rather than a hard error.
+    which is why the fallback exists rather than a hard error. A recorded Hub repository id (the
+    published voices record ``kova-ai/kova-tts-1``) is used as is.
     """
     from peft import PeftModel
 
@@ -61,7 +62,11 @@ def merge_adapter(
         raise ValueError(f"dtype must be one of {', '.join(_DTYPES)}, got {dtype!r}.")
 
     source = base_model or base_model_of(adapter_dir)
-    if source is not None and not Path(str(source)).expanduser().exists():
+    if (
+        source is not None
+        and paths._looks_local(str(source))
+        and not Path(str(source)).expanduser().exists()
+    ):
         logger.warning(
             "Adapter records base model %s, which does not exist here; falling back to the "
             "configured checkpoint.",

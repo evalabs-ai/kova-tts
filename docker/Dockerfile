@@ -91,6 +91,10 @@ RUN uv python install 3.12 && chmod -R a+rX /opt/python
 # Everything from here runs unprivileged. The venv is created by `kova`, so no `chown -R` of a
 # 5 GB directory is ever needed -- that would double the image.
 RUN mkdir -p /app /out && chown kova:kova /app /out
+# The Hugging Face cache is where the README mounts a named volume. A fresh named volume takes
+# the ownership of the directory it is mounted over, and a directory missing from the image is
+# created by the daemon as root -- so without this, every download fails with PermissionError.
+RUN install -d -o kova -g kova /home/kova/.cache /home/kova/.cache/huggingface
 WORKDIR /app
 USER kova
 
