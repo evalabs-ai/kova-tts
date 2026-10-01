@@ -28,8 +28,9 @@ line-length = 100
 # that happens to be installed: a higher target lets the `UP` rules rewrite code into 3.11- or
 # 3.12-only forms, which would break the support floor without failing anything here.
 target-version = "py310"
-# Prose stays under human control; ruff only formats Python.
-extend-exclude = ["*.md"]
+# Prose stays under human control; ruff only formats Python. Vendored NeMo grammars keep
+# upstream's style, so a diff against upstream stays readable.
+extend-exclude = ["*.md", "packages/kova-tts/src/kova_tts/normalization/nemo"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

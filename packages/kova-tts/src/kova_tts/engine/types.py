@@ -136,16 +136,31 @@ CLONE_SAMPLING = TTS_SAMPLING.replace(max_tokens=3500)
 
 
 @dataclass(frozen=True, slots=True)
+class WordTimestamp:
+    """When one word of the input text is spoken, in seconds from the start of the audio.
+
+    ``word`` is the word as it was written -- ``"$12.50"``, not the "twelve dollars fifty cents"
+    the model was asked to say.
+    """
+
+    word: str
+    start: float
+    end: float
+
+
+@dataclass(frozen=True, slots=True)
 class AudioFrame:
     """A chunk of decoded audio, ready to play or write.
 
     ``is_final`` marks the last frame of a generation so a consumer can flush and close without
-    waiting for the stream to time out.
+    waiting for the stream to time out. ``words`` holds the word timestamps that became known
+    since the previous frame, when they were asked for; a word's audio may still be on its way.
     """
 
     samples: np.ndarray  # float32 mono, shape [n]
     sample_rate: int = OUTPUT_SAMPLE_RATE
     is_final: bool = False
+    words: tuple[WordTimestamp, ...] = ()
 
     def __post_init__(self) -> None:
         arr = np.asarray(self.samples, dtype=np.float32)

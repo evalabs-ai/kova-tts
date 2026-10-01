@@ -143,8 +143,9 @@ You do not have to do anything for this; it is what `generate` and `stream` alre
 
 Two things worth knowing before you paste a chapter in:
 
-- **Nothing is normalized.** `1997`, `Dr.`, `$40` and `10:30` reach the model exactly as typed.
-  If you want "nineteen ninety-seven", write that.
+- **Numbers and symbols are spoken as words** when the `normalize` extra is installed:
+  `$40` is read as "forty dollars". Without it, or with `normalize=False`, text reaches the
+  model exactly as typed. See [Installation](installation.md#extras).
 - **A generation budget applies per segment**, not per document: 2048 codes for plain synthesis,
   about 25 seconds of speech. Prompt plus generation must also fit the 4096-token KV cache.
 

@@ -72,6 +72,15 @@
     /** Seconds of audio each loudness reading covers, for drawing the waveform. */
     const LEVEL_WINDOW_SEC = 0.02;
 
+    /**
+     * The word highlight. A gap shorter than WORD_GLIDE_SEC between two words on the same line is
+     * crossed by sliding and stretching the highlight from one to the next; a longer gap, or a
+     * line wrap, fades it out and back in over WORD_FADE_SEC on each side of the word -- outside
+     * its timestamps, so the word itself is always fully lit.
+     */
+    const WORD_GLIDE_SEC = 0.25;
+    const WORD_FADE_SEC = 0.06;
+
     /** Tallest and shortest a waveform bar is drawn, in pixels; silence is the shortest. */
     const BAR_HEIGHT = { min: 4, max: 36 };
 
@@ -543,6 +552,7 @@
         const toggle = element("kova-toggle");
         const seek = element("kova-seek");
         paintWave(total, position);
+        paintWords(position);
         if (elapsed) elapsed.textContent = label;
         if (root) {
             root.toggleAttribute("data-playing", isPlaying);
@@ -637,6 +647,93 @@
         player.stopPlayback();
         onClip = true;
         clip.currentTime = at >= player.duration() - 0.05 ? 0 : at;
+    }
+
+    /** Timed words on the page: each one's span, and when it is spoken. */
+    let timedWords = [];
+
+    /** Show newly timed words, one span each, with a space between them. */
+    function addWords(timings) {
+        const box = element("kova-words");
+        if (!box) return;
+        if (!box.querySelector(".kova-word-highlight")) {
+            const highlight = document.createElement("span");
+            highlight.className = "kova-word-highlight";
+            box.appendChild(highlight);
+        }
+        timings.words.forEach((word, i) => {
+            const span = document.createElement("span");
+            span.className = "kova-word";
+            span.textContent = word;
+            if (timedWords.length) box.appendChild(document.createTextNode(" "));
+            box.appendChild(span);
+            timedWords.push({ span, start: timings.start_seconds[i], end: timings.end_seconds[i] });
+        });
+        box.hidden = false;
+    }
+
+    function clearWords() {
+        timedWords = [];
+        const box = element("kova-words");
+        if (!box) return;
+        box.replaceChildren();
+        box.hidden = true;
+    }
+
+    /** A span's box, relative to the words' container. */
+    function wordBox(span) {
+        return { x: span.offsetLeft, y: span.offsetTop, w: span.offsetWidth, h: span.offsetHeight };
+    }
+
+    /**
+     * Where the highlight is at playback `position`, and how opaque: on a word while it is spoken,
+     * gliding across a short gap, or fading out after a word and in before the next.
+     */
+    function highlightAt(position) {
+        const next = timedWords.findIndex((word) => word.end >= position);
+        if (next === -1) {
+            const last = timedWords[timedWords.length - 1];
+            return last ? fade(last, (position - last.end) / WORD_FADE_SEC) : null;
+        }
+        const word = timedWords[next];
+        if (word.start <= position) return { box: wordBox(word.span), opacity: 1 };
+        const previous = timedWords[next - 1];
+        const gap = previous ? word.start - previous.end : Infinity;
+        if (gap < WORD_GLIDE_SEC) {
+            const from = wordBox(previous.span);
+            const to = wordBox(word.span);
+            const t = (position - previous.end) / gap;
+            if (from.y !== to.y) return { box: t < 0.5 ? from : to, opacity: 1 }; // a line wrap
+            const eased = t * t * (3 - 2 * t);
+            const mix = (a, b) => a + (b - a) * eased;
+            return {
+                box: { x: mix(from.x, to.x), y: to.y, w: mix(from.w, to.w), h: mix(from.h, to.h) },
+                opacity: 1,
+            };
+        }
+        // A pause: whichever of the two words is nearer fades.
+        if (previous && position - previous.end < word.start - position) {
+            return fade(previous, (position - previous.end) / WORD_FADE_SEC);
+        }
+        return fade(word, (word.start - position) / WORD_FADE_SEC);
+    }
+
+    function fade(word, progress) {
+        return progress >= 1 ? null : { box: wordBox(word.span), opacity: 1 - progress };
+    }
+
+    /** Put the highlight where playback `position` says it is. */
+    function paintWords(position) {
+        const box = element("kova-words");
+        const highlight = box && box.querySelector(".kova-word-highlight");
+        if (!highlight) return;
+        const state = highlightAt(position);
+        highlight.style.opacity = state ? state.opacity.toFixed(3) : "0";
+        if (!state) return;
+        const { x, y, w, h } = state.box;
+        highlight.style.transform = `translate(${x}px, ${y}px)`;
+        highlight.style.width = `${w}px`;
+        highlight.style.height = `${h}px`;
     }
 
     /** The play/pause button. While streaming it holds the stream; after, it drives the clip. */
@@ -759,6 +856,7 @@
         player.length.begin(text, active.voice);
 
         retireClip();
+        clearWords();
         setStats(null);
         setStatus(modelLoaded ? "Generating…" : "Loading the model, which takes a few seconds…");
         schedulePaint();
@@ -805,6 +903,8 @@
                         speed: "…",
                     });
                     setStatus("Playing while it generates…");
+                } else if (Array.isArray(event.words)) {
+                    addWords(event);
                 } else if (typeof event.message === "string") {
                     setStatus(`That failed: ${event.message}`);
                     player.length.settle(player.duration());

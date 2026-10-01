@@ -90,6 +90,8 @@ Request body:
 | `text` | required | Up to 5000 characters |
 | `voice` | optional | A name from `GET /v1/voices`. Omit for the base voice |
 | `sampling` | optional | `temperature`, `top_p`, `top_k`, `repetition_penalty`, `max_tokens` — send only what you want changed |
+| `normalize` | optional | `true` (default) speaks numbers and symbols as words; needs the `normalize` [extra](installation.md#extras) |
+| `timestamps` | optional | `true` also returns when each word is spoken; needs the [aligner](installation.md#getting-the-weights) |
 | `response_format` | optional | `"wav"` (default) or `"pcm"` |
 
 Response headers carry `X-Sample-Rate` and `X-Duration-Seconds`. `wav` comes back as `audio/wav`
@@ -123,15 +125,37 @@ curl -s -X POST http://127.0.0.1:8000/v1/tts \
 
 (`temperature` belongs inside `sampling`.)
 
+With `"timestamps": true` the response is JSON instead, holding the same bytes base64-encoded
+beside the word timings. Words are as written in `text`, times in seconds from the start of the
+audio:
+
+```json
+{
+  "audio": "<base64 wav or pcm>",
+  "sample_rate": 48000,
+  "duration_seconds": 2.58,
+  "timestamps": {
+    "words": ["It", "costs", "$12.50."],
+    "start_seconds": [0.062, 0.212, 0.612],
+    "end_seconds": [0.112, 0.512, 2.012]
+  }
+}
+```
+
+A server started without the aligner refuses `timestamps` with a `422`.
+
 ### `POST /v1/tts/stream`
 
 Same body as `/v1/tts`, minus `response_format`. The response is `text/event-stream`: a `chunk`
-event per decoded frame, then exactly one terminal event — `done` on success, `error` on
-failure.
+event per decoded frame — with `timestamps` events between them when asked for — then exactly
+one terminal event, `done` on success, `error` on failure.
 
 ```
 event: chunk
 data: {"index": 0, "audio": "<base64>", "sample_rate": 48000}
+
+event: timestamps
+data: {"words": ["Hello", "from"], "start_seconds": [0.062, 0.412], "end_seconds": [0.362, 0.612]}
 
 event: done
 data: {"chunks": 6, "samples": 123840, "duration_seconds": 2.58, "sample_rate": 48000}
@@ -193,7 +217,7 @@ Client frames, discriminated by their key:
 
 | Frame | |
 |---|---|
-| `{"start_context": {...}}` | Settings for the session, fixed for its lifetime: `voice` **or** `reference` (a clip to clone), `sampling`, `response_format` |
+| `{"start_context": {...}}` | Settings for the session, fixed for its lifetime: `voice` **or** `reference` (a clip to clone), `sampling`, `response_format`, `normalize` (default `true`), `timestamps` (default `false`) |
 | `{"send_text": "..."}` | Add text. Send as often as you like; the session speaks it as it arrives |
 | `{"flush": true, "flush_id": "..."}` | End the turn — finish what is left, stay open |
 | `{"close_context": true, "flush_id": "..."}` | End the turn, then end the session |
@@ -204,6 +228,7 @@ Server frames:
 |---|---|
 | `{"context_started": {...}}` | The accepted configuration, with defaults filled in and `response_format` holding what will really be sent |
 | `{"audio_chunk": "<base64>"}` | The next bytes of the session's audio stream |
+| `{"timestamps": {"words": [...], "start_seconds": [...], "end_seconds": [...]}}` | With `timestamps`: when words already sent are spoken, in seconds from the start of the session's audio. Each word once, in order; all of a turn's words arrive before its `flush_completed` |
 | `{"flush_completed": true, "flush_id": "..."}` | Terminates every flush |
 | `{"context_closed": true}` | The last frame of the session |
 | `{"error": "...", "flush_id": "..."}` | `flush_id` only when one flush is to blame |
@@ -230,6 +255,13 @@ Guarantees worth relying on:
 
 Generation and decoding run at the same time inside a flush, so the audio for its first chunk is
 on the wire while its last chunk is still being generated.
+
+**What leaves the buffer before a flush.** Only complete words — a word split across two
+`send_text` frames is still one word. With `normalize` on, only complete sentences: `!` and `?`
+end one at once, `.` once more text follows it (it may be `Dr.` or `3.5`). The last sentence of a
+turn therefore waits for its flush. With the aligner loaded, chunks are larger:
+one closes at a sentence end past 200 characters, or at a word boundary at 400, and carries its
+aligned last five seconds into the next; a flush closes it too.
 
 #### When to flush
 

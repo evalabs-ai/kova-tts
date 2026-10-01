@@ -362,12 +362,15 @@ class DemoSession:
         *,
         params: SamplingParams | None = None,
     ) -> Iterator[Any]:
-        """Audio frames for `text`, in this session's voice namespace.
+        """Audio frames for `text`, in this session's voice namespace, with word timestamps
+        whenever the engine has its aligner.
 
         Blocking, and it loads the model on the first call, so callers on an event loop run it
         in a thread. The iterator itself is lazy: nothing is generated until it is advanced.
         """
-        return self.engine().stream(text, self.resolve(voice), params=params)
+        engine = self.engine()
+        timestamps = getattr(engine, "aligner", None) is not None
+        return engine.stream(text, self.resolve(voice), params=params, timestamps=timestamps)
 
     # ---------------------------------------------------------------------------- callbacks
 

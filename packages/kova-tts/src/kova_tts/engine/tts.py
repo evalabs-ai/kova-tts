@@ -37,6 +37,17 @@ again. Getting that count wrong is inaudible in the code and very audible in the
 
 **Sampling follows the voice.** Cloning uses :data:`~kova_tts.engine.types.CLONE_SAMPLING`,
 plain synthesis :data:`~kova_tts.engine.types.TTS_SAMPLING`; pass ``params=`` to override.
+
+**Text is normalized first** (:mod:`kova_tts.normalization`): "$12.50" is spoken as "twelve
+dollars fifty cents". ``normalize=False`` speaks it as written.
+
+**With an aligner, chunks are larger and the carry is a tail.** The aligner
+(:mod:`kova_tts.alignment`) times every word of a chunk against the codes the model produced,
+which is what word timestamps are made of. It also changes the chunking: chunks of up to
+:data:`ALIGNED_SEGMENT_CHARS`, each carrying only its last
+:data:`CARRY_SECONDS` of words and codes into the next -- cut at a word boundary the aligner
+found -- rather than all of it. Without an aligner the whole previous chunk is the only carry
+that keeps text and codes matched, and that is what bounds chunks to :data:`MAX_SEGMENT_CHARS`.
 """
 
 from __future__ import annotations
@@ -53,7 +64,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import torch
 
-from kova_codec.constants import OUTPUT_SAMPLE_RATE, SAMPLE_RATE, codes_to_seconds
+from kova_codec.constants import OUTPUT_SAMPLE_RATE, SAMPLE_RATE, TOKEN_RATE, codes_to_seconds
 from kova_tts import audio as audio_io
 from kova_tts import voices as voices_module
 from kova_tts.engine import backends
@@ -66,11 +77,20 @@ from kova_tts.engine.decoder import (
     load_codec,
 )
 from kova_tts.engine.generator import DEFAULT_MAX_CACHE_LEN, Generator
-from kova_tts.engine.types import CLONE_SAMPLING, TTS_SAMPLING, AudioFrame, SamplingParams, Voice
+from kova_tts.engine.types import (
+    CLONE_SAMPLING,
+    TTS_SAMPLING,
+    AudioFrame,
+    SamplingParams,
+    Voice,
+    WordTimestamp,
+)
+from kova_tts.normalization import normalize_text, preprocess
 from kova_tts.prompt import clone_prompt, format_audio_tokens, tts_prompt
 from kova_tts.tokens import BEGIN_OF_TEXT
 
 if TYPE_CHECKING:  # pragma: no cover - typing only; mlx is not installed off Apple Silicon
+    from kova_tts.alignment import Aligner, TimedWord
     from kova_tts.engine.mlx_generator import MLXGenerator
 
 log = logging.getLogger(__name__)
@@ -100,6 +120,14 @@ MAX_CARRY_CODES = math.ceil(MAX_SEGMENT_CHARS * CODES_PER_CHAR)
 #: carried anywhere, which is why that merge is allowed to overshoot :data:`MAX_SEGMENT_CHARS`.
 MIN_SEGMENT_CHARS = 24
 
+#: Longest chunk when an aligner is loaded: whole sentences packed up to this. Larger than
+#: :data:`MAX_SEGMENT_CHARS` because the carry no longer grows with it.
+ALIGNED_SEGMENT_CHARS = 300
+
+#: How much of a finished chunk an aligner-cut carry keeps: its words that end in the last this
+#: many seconds, and the codes from the first of them on.
+CARRY_SECONDS = 5.0
+
 _SENTENCE_END = re.compile(r"(?<=[.!?…])[\"')\]]*\s+")
 _CLAUSE_END = re.compile(r"(?<=[,;:])\s+")
 
@@ -119,6 +147,57 @@ class _Carry:
 
     text: str
     codes: tuple[int, ...]
+
+
+def _aligned_carry(words: list[TimedWord], codes: list[int], *, complete: bool) -> _Carry | None:
+    """The tail of a finished chunk, cut where the aligner placed a word.
+
+    Keeps the words that end in the last :data:`CARRY_SECONDS` and the codes from the first of
+    them on, so the text and codes carried are still the same stretch of speech. When that is
+    every word of a fully aligned chunk, all of its codes are kept: the first word's start is an
+    estimate, and cutting the chunk's opening codes off by it would corrupt the continuation.
+    """
+    if not words or not codes:
+        return None
+    end_ms = len(codes) / TOKEN_RATE * 1000
+    threshold_ms = max(0.0, end_ms - CARRY_SECONDS * 1000)
+    first = next((i for i, w in enumerate(words) if w.end_ms >= threshold_ms), 0)
+    start_ms = max(0, words[first].start_ms)
+    if complete and first == 0 and words[0].end_ms >= threshold_ms and start_ms < end_ms:
+        start_ms = 0
+    start = min(int(start_ms / 1000 * TOKEN_RATE), len(codes))
+    text = " ".join(w.word.normalized.strip() for w in words[first:] if w.word.normalized.strip())
+    return _Carry(text, tuple(codes[start:]))
+
+
+def _timestamps(words: list[TimedWord], offset_codes: int) -> list[WordTimestamp]:
+    """Chunk-relative timings as :class:`WordTimestamp`, in seconds from the start of the audio."""
+    offset = offset_codes / TOKEN_RATE
+    return [
+        WordTimestamp(w.word.original, offset + w.start_ms / 1000, offset + w.end_ms / 1000)
+        for w in words
+    ]
+
+
+def _load_aligner(
+    alignment: str | os.PathLike[str] | bool | None, device: torch.device | str
+) -> Aligner | None:
+    """The aligner :meth:`KovaTTS.from_pretrained` was asked for; see its `alignment`."""
+    if alignment is False:
+        return None
+    from kova_tts.alignment import load_aligner
+
+    try:
+        return load_aligner(None if alignment in (None, True) else alignment, device=str(device))
+    except Exception as exc:
+        if alignment is not None:
+            raise
+        log.warning(
+            "Running without the word aligner (%s): no word timestamps, and long text is "
+            "generated in smaller chunks. Set KOVA_ALIGNMENT_PATH to its checkpoint.",
+            exc,
+        )
+        return None
 
 
 def _ref_text(voice: Voice | None) -> str:
@@ -170,6 +249,8 @@ class KovaTTS:
             time at 31 frames and 8.5x at 191. Raising it trades frame latency for throughput
             and changes no audio -- the windows are bit-comparable with a whole-utterance decode
             at any size.
+        aligner: Word alignment (:mod:`kova_tts.alignment`), or ``None`` to run without word
+            timestamps and with the smaller chunks that need no aligner.
     """
 
     def __init__(
@@ -182,8 +263,10 @@ class KovaTTS:
         clone_preroll: int | None = None,
         transcriber: Callable[[str], str] | None = None,
         decode_window: int = WINDOW,
+        aligner: Aligner | None = None,
     ) -> None:
         self.generator = generator
+        self.aligner = aligner
         self.lora_root = lora_root
         self.merge_lora = merge_lora
         self.clone_preroll = clone_preroll
@@ -214,8 +297,9 @@ class KovaTTS:
         clone_preroll: int | None = None,
         transcriber: Callable[[str], str] | None = None,
         decode_window: int = WINDOW,
+        alignment: str | os.PathLike[str] | bool | None = None,
     ) -> KovaTTS:
-        """Load the LM now and the codec on first use.
+        """Load the LM and the aligner now, and the codec on first use.
 
         Every path resolves through :mod:`kova_tts.paths`: the argument, then the matching
         ``KOVA_*`` environment variable, then the Hugging Face Hub.
@@ -223,6 +307,9 @@ class KovaTTS:
         `backend` picks the decode loop -- ``"torch"``, ``"mlx"``, or ``None`` to let
         :func:`kova_tts.engine.backends.resolve` read it off the checkpoint. `device`, `dtype`
         and `cuda_graph` describe the torch loop only; MLX has no counterpart to any of them.
+
+        `alignment` is the aligner checkpoint. ``None`` loads it if it can be found and runs
+        without it, with a warning, if not; ``False`` never loads it; a path must load.
         """
         generator = backends.load_generator(
             model,
@@ -239,6 +326,7 @@ class KovaTTS:
             clone_preroll=clone_preroll,
             transcriber=transcriber,
             decode_window=decode_window,
+            aligner=_load_aligner(alignment, generator.device),
         )
         tts._codec_path = codec
         tts._wavlm_path = str(wavlm) if wavlm is not None else None
@@ -334,20 +422,35 @@ class KovaTTS:
         *,
         params: SamplingParams | None = None,
         sample_rate: int | None = None,
-    ) -> np.ndarray:
+        normalize: bool = True,
+        timestamps: bool = False,
+    ) -> np.ndarray | tuple[np.ndarray, list[WordTimestamp]]:
         """Synthesize `text` and return the whole waveform: float32 mono.
 
         `sample_rate` defaults to the model's native 48 kHz. Any other rate is converted on the
         way out with :func:`kova_tts.audio.resample`, which is the same filter :meth:`stream`
         applies, so the two return the same audio at any rate.
+
+        With ``timestamps=True`` the return value is ``(wav, words)``, one
+        :class:`~kova_tts.engine.types.WordTimestamp` per word of `text`. That needs the aligner.
         """
+        self._check_timestamps(timestamps)
         out_rate = self._output_rate(sample_rate)
         resolved = self._prepare(voice)
         params = self._sampling(resolved, params)
-        codes = self._generate_codes(text, resolved, params)
+        codes: list[int] = []
+        words: list[WordTimestamp] = []
+        for chunk, timed in self._stream_codes(text, resolved, params, normalize=normalize):
+            codes.extend(chunk)
+            words.extend(timed)
         if not codes:
-            return np.zeros(0, dtype=np.float32)
+            wav = np.zeros(0, dtype=np.float32)
+        else:
+            wav = audio_io.resample(self._decode(codes, resolved), self.sample_rate, out_rate)
+        return (wav, words) if timestamps else wav
 
+    def _decode(self, codes: list[int], resolved: Voice | None) -> np.ndarray:
+        """A whole utterance's codes as audio at the model's own rate."""
         if resolved is not None and resolved.is_clone:
             # Decode the preroll and the new speech as one utterance so the decoder starts warm,
             # then drop the preroll again. The trim happens at the native rate, before any
@@ -357,7 +460,7 @@ class KovaTTS:
             wav = audio_io.trim_leading(wav, codes_to_seconds(len(preroll)), self.sample_rate)
         else:
             wav = decode_all(self.codec, codes)
-        return audio_io.resample(wav, self.sample_rate, out_rate)
+        return wav
 
     def stream(
         self,
@@ -366,6 +469,8 @@ class KovaTTS:
         *,
         params: SamplingParams | None = None,
         sample_rate: int | None = None,
+        normalize: bool = True,
+        timestamps: bool = False,
     ) -> Iterator[AudioFrame]:
         """Synthesize `text`, yielding audio as it is decoded.
 
@@ -378,7 +483,12 @@ class KovaTTS:
         boundaries -- resampling each frame on its own instead would leave a step at every join,
         two or three times a second. Its tail is flushed into the final frame, so no samples are
         lost at the end.
+
+        With ``timestamps=True`` each frame's ``words`` holds the word timestamps found since
+        the frame before, aligned in the background while generation goes on. That needs the
+        aligner.
         """
+        self._check_timestamps(timestamps)
         out_rate = self._output_rate(sample_rate)
         resolved = self._prepare(voice)
         params = self._sampling(resolved, params)
@@ -387,15 +497,28 @@ class KovaTTS:
             decoder.prime(self._preroll(resolved))
         resampler = audio_io.StreamingResampler(self.sample_rate, out_rate)
 
-        for codes in self._stream_codes(text, resolved, params):
+        words: list[WordTimestamp] = []
+        stream = self._stream_codes(text, resolved, params, normalize=normalize, live=timestamps)
+        for codes, timed in stream:
+            if timestamps:
+                words.extend(timed)
             chunk = resampler.process(decoder.push(codes))
             if chunk.size:
-                yield AudioFrame(chunk, out_rate)
+                yield AudioFrame(chunk, out_rate, words=tuple(words))
+                words.clear()
         tail = resampler.process(decoder.finish())
         remainder = resampler.flush()
         if remainder.size:
             tail = np.concatenate((tail, remainder))
-        yield AudioFrame(tail, out_rate, is_final=True)
+        yield AudioFrame(tail, out_rate, is_final=True, words=tuple(words))
+
+    def _check_timestamps(self, timestamps: bool) -> None:
+        if timestamps and self.aligner is None:
+            raise ValueError(
+                "Word timestamps need the aligner, and none is loaded. Load it with "
+                "KovaTTS.from_pretrained(alignment=<path to alignment.pt>), or set "
+                "KOVA_ALIGNMENT_PATH."
+            )
 
     def _output_rate(self, sample_rate: int | None) -> int:
         """Validate a requested output rate, defaulting to the model's own."""
@@ -492,35 +615,69 @@ class KovaTTS:
         )
         return self.generator.encode(self._prompt(segment, voice, None))
 
-    def _generate_codes(self, text: str, voice: Voice | None, params: SamplingParams) -> list[int]:
-        codes: list[int] = []
-        for chunk in self._stream_codes(text, voice, params):
-            codes.extend(chunk)
-        return codes
-
     def _stream_codes(
         self,
         text: str,
         voice: Voice | None,
         params: SamplingParams,
-    ) -> Iterator[list[int]]:
-        """Codes for the whole text, chunk by chunk, one code per yield.
+        *,
+        normalize: bool = True,
+        live: bool = False,
+    ) -> Iterator[tuple[list[int], list[WordTimestamp]]]:
+        """Codes for the whole text, chunk by chunk, with the word timestamps found so far.
 
         The carry slides: each chunk hands its text and its codes to the next one and no
         further, so the prompt stays a fixed size however long the text is. Carried codes are
         never decoded twice -- only the codes yielded here reach the codec.
+
+        Without an aligner no timestamps are yielded. With one, a chunk's timestamps arrive as
+        it ends, or as they are found when `live` is set.
         """
-        segments = split_sentences(text)
-        if not segments:
-            return
+        if self.aligner is None:
+            yield from self._stream_sentences(text, voice, params, normalize)
+        else:
+            yield from self._stream_aligned(text, voice, params, normalize, live)
+
+    def _stream_sentences(
+        self, text: str, voice: Voice | None, params: SamplingParams, normalize: bool
+    ) -> Iterator[tuple[list[int], list[WordTimestamp]]]:
+        """Chunks of :func:`split_sentences`, each carried whole into the next."""
         carry: _Carry | None = None
-        for segment in segments:
-            ids = self._prompt_ids(segment, voice, carry, params)
+        for segment in split_sentences(text):
+            spoken = normalize_text(segment) if normalize else segment
+            ids = self._prompt_ids(spoken, voice, carry, params)
             produced: list[int] = []
             for code in self.generator.stream_ids(ids, params):
                 produced.append(code)
-                yield [code]
-            carry = _Carry(segment, tuple(produced)) if len(produced) <= MAX_CARRY_CODES else None
+                yield [code], []
+            carry = _Carry(spoken, tuple(produced)) if len(produced) <= MAX_CARRY_CODES else None
+
+    def _stream_aligned(
+        self, text: str, voice: Voice | None, params: SamplingParams, normalize: bool, live: bool
+    ) -> Iterator[tuple[list[int], list[WordTimestamp]]]:
+        """Sentences packed to :data:`ALIGNED_SEGMENT_CHARS`, each carrying its aligned tail."""
+        from kova_tts.alignment import AlignmentStream
+
+        carry: _Carry | None = None
+        offset = 0  # codes yielded by earlier chunks
+        for sentence in preprocess(text, ALIGNED_SEGMENT_CHARS, normalize):
+            if not sentence.normalized.strip() and not sentence.words:
+                continue
+            alignment = AlignmentStream(self.aligner, live=live)
+            try:
+                alignment.add_words(sentence.words)
+                ids = self._prompt_ids(sentence.normalized, voice, carry, params)
+                produced: list[int] = []
+                for code in self.generator.stream_ids(ids, params):
+                    produced.append(code)
+                    alignment.add_codes([code])
+                    yield [code], _timestamps(alignment.take(), offset)
+                timed = alignment.finish()
+                yield [], _timestamps(alignment.take(), offset)
+            finally:
+                alignment.close()
+            carry = _aligned_carry(timed, produced, complete=len(timed) == len(sentence.words))
+            offset += len(produced)
 
 
 # ------------------------------------------------------------------------------ text splitting

@@ -53,6 +53,7 @@ Each extra is a feature you may not want. Install the ones you need:
 | `demo` | gradio | `kova-tts demo` |
 | `data` | faster-whisper | Transcribing reference clips and recordings without transcripts |
 | `finetune` | accelerate, pyyaml | `kova-tts finetune` and `kova-tts merge` |
+| `normalize` | pynini, sacremoses, regex, Levenshtein | Speaking numbers, dates and symbols as words; see [below](#text-normalization) |
 | `mlx` | mlx, mlx-lm | The MLX decode loop on [Apple Silicon](apple-silicon.md). macOS/arm64 wheels only |
 
 ```bash
@@ -65,25 +66,46 @@ On Apple Silicon no extra is needed for the published checkpoint, which runs und
 `uv sync` prunes as well as installs: switching to `uv sync --extra demo` removes other extras.
 Name every extra you want in one command.
 
+### Text normalization
+
+With the `normalize` extra, text is normalized before the model reads it: `$12.50` is spoken as
+"twelve dollars fifty cents" and `3/14` as "march fourteenth". Without it, text is spoken exactly
+as written; nothing else changes, word timestamps included. `uv run kova-tts paths` says whether
+it is on.
+
+The extra is pynini, which runs the grammars, and pynini publishes wheels for x86-64 Linux
+only. Everywhere else it comes from conda-forge or is built against Homebrew's OpenFst:
+
+| Platform | Install |
+|---|---|
+| Linux, x86-64 | `uv sync --extra normalize` (or `pip install "kova-tts[normalize]"`) |
+| macOS (Apple Silicon or Intel) | `brew install openfst`, then `CFLAGS="-I$(brew --prefix)/include" LDFLAGS="-L$(brew --prefix)/lib" uv sync --extra normalize` |
+| Linux, ARM | `conda install -c conda-forge pynini`, then `pip install "kova-tts[normalize]"` in that environment |
+| Windows | `conda install -c conda-forge pynini`, then `pip install "kova-tts[normalize]"` in that environment |
+
+conda-forge works on macOS too, if you already use conda. Either way, `python -c "import pynini"`
+should succeed before kova-tts can normalize.
+
 `peft` is a base dependency rather than part of `finetune`, because loading a LoRA voice is an
 inference feature — `--voice` works on a plain `uv sync`.
 
 ## Getting the weights
 
-Four artifacts. Only the first two are always needed.
+Five artifacts. Only the first two are always needed.
 
 | Artifact | What it is | Environment variable | Needed for |
 |---|---|---|---|
 | Model | Directory with `config.json`, weights and `tokenizer.json` | `KOVA_MODEL_PATH` | Everything |
 | Codec | A single checkpoint file | `KOVA_CODEC_PATH` | Everything |
+| Aligner | A single checkpoint file, `alignment.pt` | `KOVA_ALIGNMENT_PATH` | Word timestamps, and larger chunks for long text |
 | WavLM | A `microsoft/wavlm-large` directory or repo id | `KOVA_WAVLM_PATH` | Encoding audio: cloning, dataset prep |
 | LoRA voices | Directory with one subdirectory per voice | `KOVA_LORA_DIR` | `--voice` |
 
-The model, codec, and WavLM resolve in the same order: the value you passed in code or on the
+The model, codec, aligner, and WavLM resolve in the same order: the value you passed in code or on the
 command line, then the environment variable (read from the nearest `.env`), then the Hugging
 Face Hub. LoRA voices are resolved from a configured local directory.
 
-The base model and codec are hosted in
+The base model, codec, and aligner are hosted in
 [`kova-ai/kova-tts-1`](https://huggingface.co/kova-ai/kova-tts-1). They download automatically
 on first use. To prefetch them, including the repository's legal documents:
 
@@ -120,6 +142,7 @@ cp .env.example .env
 ```bash title=".env"
 KOVA_MODEL_PATH=/models/kova-tts-1
 KOVA_CODEC_PATH=/models/kova/codec.pt
+KOVA_ALIGNMENT_PATH=/models/kova/alignment.pt
 KOVA_WAVLM_PATH=/models/wavlm-large
 KOVA_LORA_DIR=/models/kova/voices
 ```

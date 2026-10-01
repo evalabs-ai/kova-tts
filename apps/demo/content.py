@@ -629,6 +629,17 @@ body, gradio-app, .gradio-container, .main, .contain {{
   flex: none; font-family: var(--kova-mono); font-size: 13px; color: var(--kova-muted);
   font-variant-numeric: tabular-nums;
 }}
+#kova-player .kova-words {{
+  position: relative; margin: 0; font-size: 15px; line-height: 1.8; color: var(--kova-ink);
+}}
+#kova-player .kova-words[hidden] {{ display: none; }}
+#kova-player .kova-word {{ position: relative; z-index: 1; }}
+/* Sized and placed on the word being spoken by player.js, every frame. */
+#kova-player .kova-word-highlight {{
+  position: absolute; left: 0; top: 0; z-index: 0; opacity: 0; pointer-events: none;
+  box-sizing: content-box; margin: -1px 0 0 -2px; padding: 1px 2px;
+  border-radius: 7px; background: rgba(15, 143, 134, 0.22);
+}}
 #kova-player .kova-foot {{
   display: flex; align-items: center; gap: 32px; flex-wrap: wrap;
   padding-top: 14px; border-top: 1px solid var(--kova-line-soft);
@@ -748,6 +759,8 @@ PLAYER_HTML = f"""
       </svg>
     </a>
   </div>
+  <!-- The text, word by word as it is heard, when the engine has its word aligner. -->
+  <p class="kova-words" id="kova-words" hidden></p>
   <!-- The finished clip plays through this element; the transport above is its only face. -->
   <audio id="kova-clip" preload="auto" hidden></audio>
   <div class="kova-foot">

@@ -23,11 +23,15 @@ DEFAULT_HUB_REPO = "kova-ai/kova-tts-1"
 #: Codec checkpoint filename within the Hub repository.
 CODEC_HUB_FILENAME = "codec.pt"
 
+#: Word-alignment checkpoint filename within the Hub repository.
+ALIGNMENT_HUB_FILENAME = "alignment.pt"
+
 #: WavLM is pulled straight from its upstream repository.
 DEFAULT_WAVLM_REPO = "microsoft/wavlm-large"
 
 ENV_MODEL = "KOVA_MODEL_PATH"
 ENV_CODEC = "KOVA_CODEC_PATH"
+ENV_ALIGNMENT = "KOVA_ALIGNMENT_PATH"
 ENV_WAVLM = "KOVA_WAVLM_PATH"
 ENV_LORA_DIR = "KOVA_LORA_DIR"
 ENV_HUB_REPO = "KOVA_HUB_REPO"
@@ -134,6 +138,16 @@ def codec_path(explicit: str | os.PathLike[str] | None = None) -> Path:
 
         return Path(hf_hub_download(repo_id=hub_repo(), filename=CODEC_HUB_FILENAME))
     return _require(value, what="Codec checkpoint", kind="file", env_var=ENV_CODEC)
+
+
+def alignment_path(explicit: str | os.PathLike[str] | None = None) -> Path:
+    """Word-alignment checkpoint file, downloading it from the Hub if no local path is set."""
+    value = str(explicit) if explicit is not None else _env(ENV_ALIGNMENT)
+    if value is None:
+        from huggingface_hub import hf_hub_download
+
+        return Path(hf_hub_download(repo_id=hub_repo(), filename=ALIGNMENT_HUB_FILENAME))
+    return _require(value, what="Alignment checkpoint", kind="file", env_var=ENV_ALIGNMENT)
 
 
 def lora_dir(explicit: str | os.PathLike[str] | None = None) -> Path | None:

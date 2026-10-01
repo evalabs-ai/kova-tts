@@ -144,7 +144,7 @@ With production serving optimizations on NVIDIA H100 GPUs, Kova achieves under 1
 to first audio in our optimized serving system. The local runtime included here is a
 separate implementation with the measurements reported above.
 
-No text normalization, no word timestamps, one request at a time. Plain PyTorch — a static KV
+One request at a time. Plain PyTorch — a static KV
 cache and a CUDA-graph decode step at batch 1. Each has a reason — see
 [Architecture](docs/architecture.md#deliberate-non-features) before filing a bug.
 

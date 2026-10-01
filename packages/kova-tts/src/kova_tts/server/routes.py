@@ -16,7 +16,7 @@ from contextlib import aclosing
 
 import numpy as np
 from fastapi import APIRouter, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from kova_tts import __version__
 from kova_tts.audio import to_pcm_bytes, to_wav_bytes
@@ -29,8 +29,10 @@ from kova_tts.server.protocol import (
     HealthResponse,
     SynthesisRequest,
     TtsRequest,
+    TtsResponse,
     VoiceInfo,
     VoicesResponse,
+    WordTimings,
 )
 
 log = logging.getLogger(__name__)
@@ -98,30 +100,58 @@ async def voices(request: Request) -> VoicesResponse:
     tags=["synthesis"],
     responses={
         200: {
-            "content": {"audio/wav": {}, PCM_MEDIA_TYPE: {}},
-            "description": "A 16-bit wav file, or headerless 16-bit little-endian PCM.",
+            "content": {
+                "audio/wav": {},
+                PCM_MEDIA_TYPE: {},
+                "application/json": {},
+            },
+            "description": "A 16-bit wav file, or headerless 16-bit little-endian PCM; with "
+            "`timestamps`, JSON holding either one base64-encoded beside the word timings.",
         },
         **_ERRORS,
     },
 )
 async def synthesize(body: TtsRequest, request: Request) -> Response:
-    """Synthesize the whole text and return it as audio bytes."""
+    """Synthesize the whole text and return it as audio bytes.
+
+    With ``timestamps``, the response is JSON instead: the same bytes base64-encoded in
+    ``audio``, beside the word timings.
+    """
     engine = _engine(request)
     params = engine.sampling(body.sampling)
+    engine.check_timestamps(body.timestamps)
 
     async with engine.reserve():
-        wav = await engine.generate(body.text, body.voice, params=params)
+        result = await engine.generate(
+            body.text,
+            body.voice,
+            params=params,
+            normalize=body.normalize,
+            timestamps=body.timestamps,
+        )
+    wav, words = result if body.timestamps else (result, [])
 
     audio = np.asarray(wav, dtype=np.float32)
     rate = engine.sample_rate
+    pcm = body.response_format == "pcm"
+    payload = to_pcm_bytes(audio) if pcm else to_wav_bytes(audio, rate)
+    if body.timestamps:
+        return JSONResponse(
+            TtsResponse(
+                audio=base64.b64encode(payload).decode("ascii"),
+                sample_rate=rate,
+                duration_seconds=round(audio.size / rate, 3),
+                timestamps=WordTimings.of(words),
+            ).model_dump()
+        )
     headers = {
         "X-Sample-Rate": str(rate),
         "X-Duration-Seconds": f"{audio.size / rate:.3f}",
     }
-    if body.response_format == "pcm":
-        return Response(to_pcm_bytes(audio), media_type=PCM_MEDIA_TYPE, headers=headers)
+    if pcm:
+        return Response(payload, media_type=PCM_MEDIA_TYPE, headers=headers)
     headers["Content-Disposition"] = 'inline; filename="speech.wav"'
-    return Response(to_wav_bytes(audio, rate), media_type="audio/wav", headers=headers)
+    return Response(payload, media_type="audio/wav", headers=headers)
 
 
 # ------------------------------------------------------------------------------ streaming (SSE)
@@ -140,8 +170,9 @@ def _sse(event: str, payload: object) -> bytes:
         200: {
             "content": {"text/event-stream": {}},
             "description": (
-                "A `chunk` event per decoded frame, then exactly one terminal event: "
-                "`done` on success, `error` on failure."
+                "A `chunk` event per decoded frame -- with `timestamps` events between them "
+                "when asked for -- then exactly one terminal event: `done` on success, "
+                "`error` on failure."
             ),
         },
         **_ERRORS,
@@ -159,6 +190,7 @@ async def synthesize_stream(body: SynthesisRequest, request: Request) -> Streami
     # Resolved up front for the same reason the reservation is: a voice that does not exist
     # should be a 404, and once the stream is open the only way left to say so is an event.
     engine.check_voice(body.voice)
+    engine.check_timestamps(body.timestamps)
 
     # Reserved here, not inside the generator below: a refusal has to happen while the status
     # code is still ours to choose. Once StreamingResponse starts, 200 has already been sent.
@@ -172,19 +204,26 @@ async def synthesize_stream(body: SynthesisRequest, request: Request) -> Streami
             # only an explicit aclose passes that on to the model's iterator. Without it the
             # abandoned generation stays marked in-flight and the next request is told the
             # server is busy.
-            stream = engine.stream(body.text, body.voice, params=params)
+            stream = engine.stream(
+                body.text,
+                body.voice,
+                params=params,
+                normalize=body.normalize,
+                timestamps=body.timestamps,
+            )
             async with aclosing(stream) as frames:
                 async for frame in frames:
-                    if not frame.samples.size:
-                        continue
-                    chunk = ChunkEvent(
-                        index=index,
-                        audio=base64.b64encode(to_pcm_bytes(frame.samples)).decode("ascii"),
-                        sample_rate=frame.sample_rate,
-                    )
-                    index += 1
-                    samples += int(frame.samples.size)
-                    yield _sse("chunk", chunk.model_dump())
+                    if frame.samples.size:
+                        chunk = ChunkEvent(
+                            index=index,
+                            audio=base64.b64encode(to_pcm_bytes(frame.samples)).decode("ascii"),
+                            sample_rate=frame.sample_rate,
+                        )
+                        index += 1
+                        samples += int(frame.samples.size)
+                        yield _sse("chunk", chunk.model_dump())
+                    if frame.words:
+                        yield _sse("timestamps", WordTimings.of(frame.words).model_dump())
             done = DoneEvent(
                 chunks=index,
                 samples=samples,

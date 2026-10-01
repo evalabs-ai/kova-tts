@@ -28,6 +28,7 @@ from kova_tts.server.protocol import (
     ErrorEvent,
     ErrorResponse,
     SynthesisRequest,
+    WordTimings,
 )
 
 from content import BUSY
@@ -60,7 +61,8 @@ def add_stream_route(app: FastAPI, session: DemoSession, *, path: str = STREAM_P
                 "content": {"text/event-stream": {}},
                 "description": (
                     "A `chunk` event per decoded frame, carrying base64 16-bit little-endian "
-                    "PCM, then exactly one terminal event: `done`, or `error`."
+                    "PCM, and `timestamps` events as words are placed in it, then exactly one "
+                    "terminal event: `done`, or `error`."
                 ),
             },
             409: {"model": ErrorResponse, "description": "A generation is already in flight."},
@@ -98,18 +100,19 @@ def add_stream_route(app: FastAPI, session: DemoSession, *, path: str = STREAM_P
                 # next press is told the model is busy.
                 async with aclosing(aiter_frames(frames)) as decoded:
                     async for frame in decoded:
-                        if not frame.samples.size:
-                            continue
-                        rate = frame.sample_rate
-                        pcm = audio_io.to_pcm_bytes(frame.samples)
-                        chunk = ChunkEvent(
-                            index=index,
-                            audio=base64.b64encode(pcm).decode("ascii"),
-                            sample_rate=rate,
-                        )
-                        index += 1
-                        samples += int(frame.samples.size)
-                        yield _sse("chunk", chunk.model_dump())
+                        if frame.samples.size:
+                            rate = frame.sample_rate
+                            pcm = audio_io.to_pcm_bytes(frame.samples)
+                            chunk = ChunkEvent(
+                                index=index,
+                                audio=base64.b64encode(pcm).decode("ascii"),
+                                sample_rate=rate,
+                            )
+                            index += 1
+                            samples += int(frame.samples.size)
+                            yield _sse("chunk", chunk.model_dump())
+                        if frame.words:
+                            yield _sse("timestamps", WordTimings.of(frame.words).model_dump())
                 yield _sse(
                     "done",
                     DoneEvent(

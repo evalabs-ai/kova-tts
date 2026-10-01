@@ -171,15 +171,33 @@ class Engine:
         except ValueError as exc:
             raise InvalidRequest(f"sampling: {exc}") from exc
 
+    def check_timestamps(self, timestamps: bool) -> None:
+        """Refuse word timestamps up front when no aligner is loaded, while a status code can
+        still say so."""
+        if timestamps and getattr(self.tts, "aligner", None) is None:
+            raise InvalidRequest(
+                "timestamps: this server has no word aligner loaded. Start it with "
+                "KOVA_ALIGNMENT_PATH pointing at alignment.pt, or let it download from the Hub."
+            )
+
     async def generate(
         self,
         text: str,
         voice: str | None,
         *,
         params: SamplingParams | None,
+        normalize: bool = True,
+        timestamps: bool = False,
     ) -> Any:
-        """The whole waveform, generated on the engine thread."""
-        return await on_engine_thread(self.tts.generate, text, voice, params=params)
+        """The whole waveform -- and its word timestamps, if asked -- on the engine thread."""
+        return await on_engine_thread(
+            self.tts.generate,
+            text,
+            voice,
+            params=params,
+            normalize=normalize,
+            timestamps=timestamps,
+        )
 
     def stream(
         self,
@@ -187,6 +205,8 @@ class Engine:
         voice: str | None,
         *,
         params: SamplingParams | None,
+        normalize: bool = True,
+        timestamps: bool = False,
     ) -> AsyncIterator[AudioFrame]:
         """Frames as the codec produces them, pumped off the event loop.
 
@@ -194,7 +214,10 @@ class Engine:
         is awaited -- which is what lets a caller reserve the model, hand the response back to
         the ASGI server, and only then start generating.
         """
-        return aiter_frames(self.tts.stream(text, voice, params=params))
+        frames = self.tts.stream(
+            text, voice, params=params, normalize=normalize, timestamps=timestamps
+        )
+        return aiter_frames(frames)
 
 
 #: What the engine thread is called in a stack dump or a profiler.

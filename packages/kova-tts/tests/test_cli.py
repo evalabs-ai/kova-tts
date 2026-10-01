@@ -38,6 +38,7 @@ def isolated_env(monkeypatch, tmp_path):
     (loras / "voice_a" / "adapter_config.json").write_text("{}")
     monkeypatch.setenv("KOVA_MODEL_PATH", str(model))
     monkeypatch.setenv("KOVA_CODEC_PATH", str(codec))
+    monkeypatch.setenv("KOVA_ALIGNMENT_PATH", str(codec))
     monkeypatch.setenv("KOVA_WAVLM_PATH", str(model))
     monkeypatch.setenv("KOVA_LORA_DIR", str(loras))
     from kova_tts import paths
@@ -235,6 +236,7 @@ class TestLaziness:
         env.update(
             KOVA_MODEL_PATH=str(model),
             KOVA_CODEC_PATH=str(codec),
+            KOVA_ALIGNMENT_PATH=str(codec),
             KOVA_WAVLM_PATH=str(model),
             KOVA_LORA_DIR=str(model),
         )
@@ -674,6 +676,7 @@ class TestDownload:
         asked: list[tuple] = []
 
         monkeypatch.delenv("KOVA_CODEC_PATH")
+        monkeypatch.delenv("KOVA_ALIGNMENT_PATH")
         monkeypatch.delenv("KOVA_MODEL_PATH")
         fake_module(
             "huggingface_hub",
@@ -685,8 +688,9 @@ class TestDownload:
         )
         assert cli.main(["download"]) == 0
         out = capsys.readouterr().out
-        assert "model" in out and "codec" in out and "total" in out
+        assert "model" in out and "codec" in out and "alignment" in out and "total" in out
         assert ("snapshot", "kova-ai/kova-tts-1") in asked
+        assert ("kova-ai/kova-tts-1", "alignment.pt") in asked
 
     def test_local_artifacts_are_skipped(self, monkeypatch, capsys):
         fake_module(
@@ -697,7 +701,7 @@ class TestDownload:
         )
         assert cli.main(["download"]) == 0
         out = capsys.readouterr().out
-        assert out.count("already local") == 2
+        assert out.count("already local") == 3
         assert "0 B downloaded" in out
 
     def test_wavlm_is_opt_in(self, monkeypatch, capsys):

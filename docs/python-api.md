@@ -43,10 +43,11 @@ KovaTTS.from_pretrained(
     merge_lora=True,         # fold adapter weights into the base model
     clone_preroll=None,      # reference codes decoded to warm the codec; None = the whole clip
     transcriber=None,        # callable(path) -> str, for clone() without a transcript
+    alignment=None,          # word aligner; None = KOVA_ALIGNMENT_PATH or the Hub, if found
 )
 ```
 
-The language model loads now; the codec loads on first use, and an *encoding* codec (the one
+The language model and the word aligner load now; the codec loads on first use, and an *encoding* codec (the one
 that needs WavLM) only if you call `clone`. `from_pretrained` also warms up: it captures the
 decode step's CUDA graph and runs one prefill, so the first request does not pay ~1.2 s for it.
 
@@ -66,8 +67,10 @@ Keyword arguments are honoured only on the call that actually loads the model.
 ### Synthesis
 
 ```python
-generate(text, voice=None, *, params=None, sample_rate=None) -> np.ndarray
-stream(text, voice=None, *, params=None, sample_rate=None) -> Iterator[AudioFrame]
+generate(text, voice=None, *, params=None, sample_rate=None, normalize=True, timestamps=False)
+    -> np.ndarray  # or (np.ndarray, list[WordTimestamp]) with timestamps=True
+stream(text, voice=None, *, params=None, sample_rate=None, normalize=True, timestamps=False)
+    -> Iterator[AudioFrame]
 save(wav, path, sample_rate=None) -> Path
 ```
 
@@ -83,6 +86,30 @@ import numpy as np
 frames = [f.samples for f in tts.stream("Two sentences. Streamed as they decode.")]
 wav = np.concatenate(frames) if frames else np.zeros(0, dtype=np.float32)
 ```
+
+### Normalization and word timestamps
+
+Text is normalized before the model sees it — `"$12.50"` is spoken as "twelve dollars fifty
+cents" — when the `normalize` [extra](installation.md#extras) is installed. `normalize=False`
+speaks it exactly as written.
+
+`timestamps=True` reports when each word is spoken, as `WordTimestamp(word, start, end)` in
+seconds from the start of the audio, with `word` as you wrote it:
+
+```python
+wav, words = tts.generate("It costs $12.50.", timestamps=True)
+# [WordTimestamp(word='It', start=0.06, end=0.14), ..., WordTimestamp(word='$12.50.', ...)]
+
+for frame in tts.stream("Words arrive as they are placed.", timestamps=True):
+    for word in frame.words:  # the words placed since the previous frame
+        print(word.word, word.start, word.end)
+```
+
+Timestamps need the word aligner, `alignment.pt`. `from_pretrained` loads it from
+`KOVA_ALIGNMENT_PATH` or the Hub when it can, and runs without it, with a warning, when it
+cannot; pass `alignment=False` to skip it, or a path to require it. Asking for timestamps
+without it raises `ValueError`. The aligner also changes how long text is chunked — see
+[Architecture](architecture.md#with-the-aligner-larger-chunks-a-tail-carry).
 
 ### Output sample rates
 
@@ -181,9 +208,11 @@ flag used by tests to compare the CUDA graph and eager paths exactly.
 ### `AudioFrame`
 
 ```python
-AudioFrame(samples, sample_rate=48000, is_final=False)
+AudioFrame(samples, sample_rate=48000, is_final=False, words=())
 frame.duration_seconds
 ```
+
+`words` holds the `WordTimestamp`s placed since the previous frame, when `timestamps=True`.
 
 `samples` must be 1-D; a 2-D array is rejected with a message pointing at `as_waveform`.
 
@@ -330,7 +359,9 @@ variable that set it — this keeps a typo in `.env` from turning into a multi-g
 | `kova_tts.engine.generator` | The batch-1 decode loop: static cache, CUDA graph, narrowed head, LoRA |
 | `kova_tts.engine.decoder` | Windowed streaming decode, and the whole-utterance path |
 | `kova_tts.engine.sampling` | Temperature, top-p, top-k, repetition penalty |
-| `kova_tts.engine.types` | `Voice`, `SamplingParams`, `AudioFrame`, the presets |
+| `kova_tts.engine.types` | `Voice`, `SamplingParams`, `AudioFrame`, `WordTimestamp`, the presets |
+| `kova_tts.normalization` | Sentence splitting, written → spoken text, the word map between them |
+| `kova_tts.alignment` | Word timestamps from codes: the CTC model, forced alignment, streaming |
 | `kova_tts.tokens` | Structural tokens, `VocabMap` |
 | `kova_tts.prompt` | The three prompt shapes |
 | `kova_tts.voices` | Name → `Voice`, and clip → `Voice` |

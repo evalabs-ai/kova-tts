@@ -45,6 +45,16 @@
       "file": "wavlm-hub-linked-LICENSE.txt",
       "source": "https://raw.githubusercontent.com/microsoft/UniSpeech/6112826ac13a4327f4c9a7afa2a505e35b763514/LICENSE",
       "sha256": "74295d561f60f770a4aa7525b71c0d119ec70422e9f5c601ee3c77e1b7822c91"
+    },
+    {
+      "file": "nemo-text-processing-LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/NVIDIA/NeMo-text-processing/ddadfb2a38d2bc6b8cc6232c4f915eb60f500688/LICENSE",
+      "sha256": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1"
+    },
+    {
+      "file": "ctc-forced-aligner-LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/MahmoudAshraf97/ctc-forced-aligner/64293cc6d711e57666c4a8b098e9fd93b381fd88/LICENSE",
+      "sha256": "05aef0bf69ec0d4f95964fbb161fa1b5294d73e2f45d20e0e6312239c1174265"
     }
   ]
 }

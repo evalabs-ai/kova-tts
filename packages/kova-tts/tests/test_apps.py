@@ -101,7 +101,7 @@ class FakeTTS:
     def voice(self, name: str) -> Voice:
         return Voice(name=name, lora_path=Path(f"/nowhere/{name}"))
 
-    def stream(self, text, voice=None, *, params=None):
+    def stream(self, text, voice=None, *, params=None, timestamps=False):
         self.calls.append({"text": text, "voice": voice, "params": params})
         if self._fail is not None:
             raise self._fail

@@ -18,13 +18,14 @@ output rate, base64-encoded in each event. The WebSocket session chooses: its
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from kova_codec.constants import OUTPUT_SAMPLE_RATE
 from kova_tts.audio import STREAMING_FORMATS, content_type
-from kova_tts.engine.types import SamplingParams
+from kova_tts.engine.types import SamplingParams, WordTimestamp
 
 #: Longest text accepted in one request. Not a model limit -- a guard rail: generation beats
 #: realtime by only a small factor, so a novel pasted into ``text`` is a multi-hour request that
@@ -138,6 +139,25 @@ class ResponseFormat(_WireModel):
 # ------------------------------------------------------------------------------- HTTP requests
 
 
+class WordTimings(BaseModel):
+    """Word timestamps as three parallel arrays: word ``i`` is spoken from ``start_seconds[i]``
+    to ``end_seconds[i]``, counted from the start of the audio. Words are as written in the
+    request, not as normalized for speech."""
+
+    words: list[str] = Field(default_factory=list)
+    start_seconds: list[float] = Field(default_factory=list)
+    end_seconds: list[float] = Field(default_factory=list)
+
+    @classmethod
+    def of(cls, words: Iterable[WordTimestamp]) -> WordTimings:
+        timings = cls()
+        for word in words:
+            timings.words.append(word.word)
+            timings.start_seconds.append(round(word.start, 3))
+            timings.end_seconds.append(round(word.end, 3))
+        return timings
+
+
 class SynthesisRequest(_WireModel):
     """What to say, and how. Shared by ``/v1/tts`` and ``/v1/tts/stream``."""
 
@@ -147,6 +167,15 @@ class SynthesisRequest(_WireModel):
         description="A LoRA voice name from GET /v1/voices. Omit for the base model's voice.",
     )
     sampling: SamplingOverrides | None = None
+    normalize: bool = Field(
+        default=True,
+        description='Speak numbers, dates and symbols as words ("$5" as "five dollars"). '
+        "Needs the server's normalize extra; without it text is spoken as written.",
+    )
+    timestamps: bool = Field(
+        default=False,
+        description="Also return when each word is spoken. Needs the server's aligner.",
+    )
 
     @field_validator("text")
     @classmethod
@@ -157,7 +186,11 @@ class SynthesisRequest(_WireModel):
 
 
 class TtsRequest(SynthesisRequest):
-    """``POST /v1/tts``: the whole utterance, in one response body."""
+    """``POST /v1/tts``: the whole utterance, in one response body.
+
+    The body is the audio itself, or -- with ``timestamps`` -- a :class:`TtsResponse` holding
+    it base64-encoded beside the word timings.
+    """
 
     response_format: Literal["wav", "pcm"] = Field(
         default="wav",
@@ -308,6 +341,15 @@ class VoicesResponse(BaseModel):
     lora_dir: str | None = None
 
 
+class TtsResponse(BaseModel):
+    """``POST /v1/tts`` with ``timestamps``: the audio and when each word is spoken in it."""
+
+    audio: str  # base64 of the wav file or pcm bytes, per response_format
+    sample_rate: int
+    duration_seconds: float
+    timestamps: WordTimings
+
+
 class ErrorResponse(BaseModel):
     """The body of every failure, whatever the status code."""
 
@@ -450,6 +492,15 @@ class StartConfig(_WireModel):
     )
     sampling: SamplingOverrides | None = None
     response_format: ResponseFormat = Field(default_factory=ResponseFormat)
+    normalize: bool = Field(
+        default=True,
+        description='Speak numbers, dates and symbols as words ("$5" as "five dollars").',
+    )
+    timestamps: bool = Field(
+        default=False,
+        description="Send a timestamps frame as words are placed in the audio. Needs the "
+        "server's aligner.",
+    )
 
     @model_validator(mode="after")
     def _one_voice_at_a_time(self) -> StartConfig:
@@ -569,6 +620,13 @@ class AudioChunk(_WireModel):
     audio_chunk: str
 
 
+class Timestamps(_WireModel):
+    """When words already sent as audio are spoken, in seconds from the start of the session's
+    audio. Sent as the aligner places them, in order, each word once."""
+
+    timestamps: WordTimings
+
+
 class FlushCompleted(_WireModel):
     """All audio for one flush has been sent. Arrives even when the flush produced none."""
 
@@ -589,7 +647,7 @@ class Error(_WireModel):
     flush_id: str | None = None
 
 
-OutgoingFrame = ContextStarted | AudioChunk | FlushCompleted | ContextClosed | Error
+OutgoingFrame = ContextStarted | AudioChunk | Timestamps | FlushCompleted | ContextClosed | Error
 
 
 def to_wire(frame: BaseModel) -> dict[str, Any]:

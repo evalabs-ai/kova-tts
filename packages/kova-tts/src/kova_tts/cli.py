@@ -192,7 +192,7 @@ def download_weights(
     force: bool = False,
     token: str | None = None,
 ) -> list[tuple[str, Path | str, int]]:
-    """Prefetch the LM, the codec and optionally WavLM into the local Hub cache.
+    """Prefetch the LM, the codec, the aligner and optionally WavLM into the local Hub cache.
 
     So that a later run works with no network: a container image, an air-gapped box, or simply a
     first synthesis that should not stall on a multi-gigabyte download. Anything already pointed
@@ -222,19 +222,24 @@ def download_weights(
 
     snapshot("model", repo_id if repo else paths.model_path())
 
-    # The codec is one file inside the model repository, so a snapshot has already brought it
-    # down; asking for it by name is what pins the exact file a later run will open.
-    configured_codec = None if repo else _configured(paths.ENV_CODEC)
-    if configured_codec is not None:
-        fetched.append(("codec", configured_codec, 0))
-    else:
+    # The codec and the aligner are single files inside the model repository, so a snapshot
+    # has already brought them down; asking for each by name is what pins the exact file a
+    # later run will open.
+    for label, variable, filename in (
+        ("codec", paths.ENV_CODEC, paths.CODEC_HUB_FILENAME),
+        ("alignment", paths.ENV_ALIGNMENT, paths.ALIGNMENT_HUB_FILENAME),
+    ):
+        configured = None if repo else _configured(variable)
+        if configured is not None:
+            fetched.append((label, configured, 0))
+            continue
         file = Path(
             _hub_call(
-                lambda: hf_hub_download(repo_id, paths.CODEC_HUB_FILENAME, **options),
-                what=f"{paths.CODEC_HUB_FILENAME} from {repo_id!r}",
+                lambda filename=filename: hf_hub_download(repo_id, filename, **options),
+                what=f"{filename} from {repo_id!r}",
             )
         )
-        fetched.append(("codec", file, _size_of(file)))
+        fetched.append((label, file, _size_of(file)))
 
     if wavlm:
         snapshot("wavlm", paths.wavlm_path())
@@ -318,6 +323,16 @@ def _cmd_paths(_args: argparse.Namespace) -> int:
 
     voices = paths.available_loras()
     print(f"voices    {', '.join(voices) if voices else 'none'}")
+    # Both optional, so neither fails the command: without them there are no word timestamps,
+    # or text is spoken as written.
+    try:
+        print(f"alignment {paths.alignment_path()}")
+    except Exception as exc:  # noqa: BLE001 - reported, not raised
+        print(f"alignment unavailable, so no word timestamps: {exc}")
+    from kova_tts import normalization
+
+    normalize = "on" if normalization.available() else "off: install the normalize extra"
+    print(f"normalize {normalize}")
     # Which decode loop that model resolves to. Reported here because the commonest way to be
     # surprised by it is to point at an Apple-converted checkpoint on a machine without mlx,
     # and this is the command whose job is to say what will happen before anything loads.

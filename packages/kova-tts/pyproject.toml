@@ -23,6 +23,10 @@ dependencies = [
     "scipy>=1.11",
     "python-dotenv>=1.0",
     "huggingface-hub>=0.26",
+    # Sentence boundaries for chunking long text (`kova_tts.normalization.split`).
+    "pysbd>=0.3.4",
+    # The CTC forced-alignment kernel behind word timestamps (`kova_tts.alignment.ctc`).
+    "numba>=0.60",
 ]
 
 [project.optional-dependencies]
@@ -52,6 +56,16 @@ demo = [
     "librosa>=0.10",
 ]
 data = ["faster-whisper>=1.1"]
+# Text normalization: "$12.50" is read as "twelve dollars fifty cents". Optional because
+# pynini publishes wheels for x86-64 Linux only; on macOS, ARM Linux and Windows it comes from
+# conda-forge or a Homebrew OpenFst build (docs/installation.md). Without it text is spoken as
+# written and everything else, word timestamps included, works the same.
+normalize = [
+    "pynini>=2.1.6",
+    "sacremoses>=0.0.53",
+    "regex>=2023.0",
+    "Levenshtein>=0.21",
+]
 # The training command only. `pyyaml` parses the run config; `accelerate` is never imported
 # here but `transformers.Trainer` requires it at runtime. Both already arrive transitively with
 # `peft`, which is a base dependency, so this extra costs almost nothing on top of a base

@@ -58,8 +58,6 @@ deployments need their own access control, concurrency management, and serving o
 None of these are missing features. Each is a decision with a reason, and
 [Architecture](architecture.md#deliberate-non-features) gives the reasons.
 
-- **No text normalization.** `1997` and `Dr.` reach the model exactly as you typed them.
-- **No word or phoneme timestamps.** The model emits audio codes, not alignments.
 - **One request at a time.** The server generates one utterance at a time and refuses a
   concurrent request with a 409 rather than queueing it.
 - **No separate inference runtime.** Plain PyTorch: a preallocated static KV cache and a

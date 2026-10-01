@@ -54,7 +54,8 @@ starts over: pressing it mid-run drops the current clip and synthesizes the box'
 with whatever voice and settings are picked now.
 
 **The player** draws the clip as a waveform: bars fill in as audio arrives, turn teal as they are
-heard, and the rest of the bar stays flat until it has been generated. Once the generation
+heard, and the rest of the bar stays flat until it has been generated. When the engine has its word aligner,
+the text appears underneath, each word lighting up as it is spoken. Once the generation
 finishes, the same bar scrubs the finished clip and a download button appears — the clip is
 built in the browser from the frames it already received, so nothing is generated or encoded
 twice. Underneath: time to first audio, how much speech was produced in how long, and how that

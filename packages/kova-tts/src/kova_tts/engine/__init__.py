@@ -13,6 +13,7 @@ from kova_tts.engine.types import (
     AudioFrame,
     SamplingParams,
     Voice,
+    WordTimestamp,
 )
 
 __all__ = [
@@ -21,4 +22,5 @@ __all__ = [
     "AudioFrame",
     "SamplingParams",
     "Voice",
+    "WordTimestamp",
 ]

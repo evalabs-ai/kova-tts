@@ -42,7 +42,9 @@ FROM ${CUDA_IMAGE}
 #   finetune  accelerate and pyyaml, so the image can also *train* a LoRA. Both already arrive
 #             transitively with peft, which is a base dependency, so this extra adds almost
 #             nothing. Not needed to *use* a LoRA voice either -- `--voice` works without it.
-ARG KOVA_EXTRAS="--extra server --extra demo --extra data --extra finetune"
+#   normalize pynini, so "$12.50" is spoken as words. Its wheels are x86-64 Linux only, which
+#             this image is; drop it from the list to build for ARM.
+ARG KOVA_EXTRAS="--extra server --extra demo --extra data --extra finetune --extra normalize"
 
 ARG KOVA_UID=1000
 ARG KOVA_GID=1000

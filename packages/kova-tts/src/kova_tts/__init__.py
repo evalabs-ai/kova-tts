@@ -16,9 +16,11 @@ from kova_tts.engine.types import (
     AudioFrame,
     SamplingParams,
     Voice,
+    WordTimestamp,
 )
 from kova_tts.paths import (
     MissingArtifact,
+    alignment_path,
     available_loras,
     codec_path,
     load_dotenv,
@@ -79,7 +81,9 @@ __all__ = [
     "VocabMap",
     "Voice",
     "VoiceRegistry",
+    "WordTimestamp",
     "__version__",
+    "alignment_path",
     "available_loras",
     "available_voices",
     "clone_prompt",

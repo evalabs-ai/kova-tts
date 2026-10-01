@@ -37,6 +37,7 @@ services:
       # quietly downloading gigabytes. Set them in docker/.env to paths inside /weights.
       KOVA_MODEL_PATH: "${KOVA_MODEL_PATH:-}"
       KOVA_CODEC_PATH: "${KOVA_CODEC_PATH:-}"
+      KOVA_ALIGNMENT_PATH: "${KOVA_ALIGNMENT_PATH:-}"
       KOVA_WAVLM_PATH: "${KOVA_WAVLM_PATH:-}"
       KOVA_LORA_DIR: "${KOVA_LORA_DIR:-}"
       KOVA_HUB_REPO: "${KOVA_HUB_REPO:-}"

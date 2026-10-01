@@ -72,6 +72,19 @@ container for its whole life and ``context_started`` reports what it settled on.
 pipeline fixed at 16 kHz asks for 16 kHz and gets it from the same filter every other path here
 uses, its state crossing burst and turn boundaries alike.
 
+**Text is spoken as words, normalized.** Only complete words leave the buffer -- a word cut in
+half between two ``send_text`` frames is never read as two -- and with ``normalize`` on (the
+default) only complete sentences, since "$1" and ",000" normalize differently apart than
+together. A flush takes whatever is left.
+
+**With the aligner loaded, chunks are larger.** A chunk closes at a sentence
+end once it holds :data:`ALIGNED_SOFT_CHARS`, or at a word boundary at
+:data:`ALIGNED_MAX_CHARS`, and hands on only its aligned last few seconds
+(:func:`~kova_tts.engine.tts._aligned_carry`); a flush closes it too, so every word of a turn
+has been timed when ``flush_completed`` goes out. ``timestamps`` frames then report when each
+word is spoken. Without the aligner, chunks are :data:`~kova_tts.engine.tts.MAX_SEGMENT_CHARS`
+and carried whole, as described above.
+
 One thing this session deliberately does not do: it holds the model for a burst at a time, not
 for the life of the connection, so a session waiting on its client costs nothing and a burst that
 collides with an HTTP request gets an ``error`` frame rather than deadlocking.
@@ -86,16 +99,18 @@ import io
 import logging
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import soundfile as sf
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from kova_codec.constants import codes_to_seconds
+from kova_codec.constants import TOKEN_RATE, codes_to_seconds
 from kova_tts import audio as audio_io
 from kova_tts import voices as voices_module
-from kova_tts.engine.types import CLONE_SAMPLING, Voice
+from kova_tts.engine.types import CLONE_SAMPLING, Voice, WordTimestamp
+from kova_tts.normalization import Word, preprocess
+from kova_tts.normalization.split import last_sentence_end, stable_sentence_end, tags_closed
 from kova_tts.server import formats
 from kova_tts.server import protocol as wire
 from kova_tts.server.engine import (
@@ -105,6 +120,9 @@ from kova_tts.server.engine import (
     on_engine_thread,
 )
 from kova_tts.server.errors import InvalidRequest
+
+if TYPE_CHECKING:  # pragma: no cover - typing only; the aligner imports torch
+    from kova_tts.alignment import AlignmentStream
 
 log = logging.getLogger(__name__)
 
@@ -131,6 +149,12 @@ CODES_PER_CHAR = 3
 #: spoken as soon as it is complete.
 MIN_BUFFER_CHARS = 50
 
+#: With the aligner, a chunk closes at the first sentence end past this many characters...
+ALIGNED_SOFT_CHARS = 200
+
+#: ...or, with no sentence end to close at, at the last word boundary before this many.
+ALIGNED_MAX_CHARS = 400
+
 #: Reference codes pushed through the decoder before a cloned session's first audio. Every one of
 #: them is decoded and then thrown away, so this is time-to-first-audio spent on audio nobody
 #: hears; one second is enough for the decoder's LSTM and first convolution to start from real
@@ -154,7 +178,7 @@ class _Work:
 
 @dataclass(slots=True)
 class _Chunk:
-    """The generation in progress: the text it is speaking, and the codes it has produced.
+    """The generation in progress: the words it is speaking, and the codes it has produced.
 
     The two halves grow together and are only ever used together -- the text is what the next
     burst asks the model to go on reading, the codes are how far into it the model has got.
@@ -164,11 +188,19 @@ class _Chunk:
     far ahead of the text the next burst may run is measured from that point rather than from the
     start of the chunk, which is what lets a chunk carry on being extended after a turn has ended
     on it.
+
+    ``alignment`` times the chunk's words against its codes when the aligner is loaded.
     """
 
-    text: str = ""
+    words: list[Word] = field(default_factory=list)
     codes: list[int] = field(default_factory=list)
     level: tuple[int, int] = (0, 0)
+    alignment: AlignmentStream | None = None
+
+    @property
+    def text(self) -> str:
+        """What the model reads: the words in their spoken form."""
+        return " ".join(word.normalized for word in self.words)
 
     @property
     def settled(self) -> bool:
@@ -204,6 +236,7 @@ class _Model:
       drops the carry when the two together would not fit the KV cache;
     * ``KovaTTS._Carry`` and :data:`~kova_tts.engine.tts.MAX_CARRY_CODES`, which are the rule for
       what may be carried at all -- text and codes together, or nothing;
+    * ``KovaTTS.aligner`` and ``_aligned_carry`` for the aligned chunking, when it is loaded;
     * ``Generator.stream_ids`` for the codes, and the codec for the audio.
 
     The imports happen here rather than at module scope so ``import kova_tts.server`` still costs
@@ -211,10 +244,13 @@ class _Model:
     """
 
     def __init__(self, tts: Any) -> None:
+        from kova_tts.alignment import AlignmentStream
         from kova_tts.engine.decoder import CONV_PADDING, LOOKAHEAD, WINDOW, StreamingDecoder
         from kova_tts.engine.tts import (
+            CARRY_SECONDS,
             MAX_CARRY_CODES,
             MAX_SEGMENT_CHARS,
+            _aligned_carry,
             _Carry,
             _codes_for_chars,
             split_sentences,
@@ -223,11 +259,16 @@ class _Model:
         self._tts = tts
         self._decoder = StreamingDecoder
         self._carry = _Carry
+        self._aligned_carry = _aligned_carry
+        self._alignment_stream = AlignmentStream
         self._split = split_sentences
         self._max_carry_codes = MAX_CARRY_CODES
+        self._carry_codes = round(CARRY_SECONDS * TOKEN_RATE)
         self._codes_for_chars = _codes_for_chars
+        #: The word aligner, or ``None``; it decides which chunking the session uses.
+        self.aligner = getattr(tts, "aligner", None)
         #: Text one chunk holds: what the model renders in a single generation.
-        self.max_chars = MAX_SEGMENT_CHARS
+        self.max_chars = ALIGNED_MAX_CHARS if self.aligner is not None else MAX_SEGMENT_CHARS
         #: Codes of the previous turn replayed into a new decoder before any audio is kept.
         #: One whole window's worth -- what a window emits, its lookahead on both sides and the
         #: convolution's reach on both ends -- which is everything the decoder reads to produce
@@ -237,7 +278,15 @@ class _Model:
 
     def chunks(self, text: str) -> list[str]:
         """Split text into pieces no larger than one generation, at its own boundaries."""
+        if self.aligner is not None:
+            return _aligned_chunks(text)
         return self._split(text)
+
+    def alignment(self, *, live: bool) -> Any:
+        """A new chunk's word alignment, or ``None`` without the aligner."""
+        if self.aligner is None:
+            return None
+        return self._alignment_stream(self.aligner, live=live)
 
     def prepare(self, voice: Any) -> Any:
         """Resolve a voice and put the LM into its weights. Blocking; call inside a thread."""
@@ -287,6 +336,11 @@ class _Model:
         """
         return self._carry(text, tuple(codes)) if len(codes) <= self._max_carry_codes else None
 
+    def aligned_carry(self, timed: list[Any], codes: list[int], *, complete: bool) -> Any:
+        """What a finished chunk hands on when the aligner is loaded: its last few seconds, cut
+        at a word the aligner placed, so it fits however long the chunk ran."""
+        return self._aligned_carry(timed, codes, complete=complete)
+
     def decoder(self) -> Any:
         """A decoder for one turn. Blocking on first use -- the codec loads then."""
         return self._decoder(self._tts.codec)
@@ -313,8 +367,14 @@ class _Model:
         fit -- and a whole chunk's worth of generation still reserved on top, since the reserve
         is what the chunk might need rather than what is left of it. Text is counted a token per
         character, which no tokenizer ever reaches, so the estimate errs towards accepting.
+
+        With the aligner the carry is bounded by time rather than dropped, so it is counted in,
+        and the chunk's codes are counted once: its larger chunks would not fit twice, and the
+        generator clamps a final burst to the room that is left rather than failing.
         """
         chunk = self.max_chars + 2 * self._codes_for_chars(self.max_chars)
+        if self.aligner is not None:
+            chunk = self.max_chars + self._codes_for_chars(self.max_chars) + self._carry_codes
         return len(voice.ref_codes) + len(voice.ref_text) + chunk, int(
             self._tts.generator.max_cache_len
         )
@@ -355,6 +415,13 @@ class Session:
         self.voice: Any = None
 
         self._buffer: list[str] = []
+        #: Buffered characters when the last look for a sentence end found none, so the producer
+        #: waits for more text rather than looking again at the same text.
+        self._stalled = -1
+        #: Words taken from the buffer that have not fitted into the chunk yet.
+        self._pending: list[Word] = []
+        #: Codes of the chunks already closed: where the open chunk's timestamps start from.
+        self._spoken_codes = 0
         self._work: asyncio.Queue[_Work] = asyncio.Queue()
         #: Set whenever a frame arrives, so the producer wakes for text as well as for a flush.
         self._ready = asyncio.Event()
@@ -469,22 +536,52 @@ class Session:
             self._ready.clear()
             if not self._work.empty():
                 return self._work.get_nowait()
-            if sum(len(part) for part in self._buffer) >= MIN_BUFFER_CHARS:
+            if self._pending:
+                return None
+            buffered = sum(len(part) for part in self._buffer)
+            if buffered >= MIN_BUFFER_CHARS and buffered != self._stalled:
                 return None
             await self._ready.wait()
 
     async def _extend(self) -> None:
         """Speak further into the turn in progress, without ending it."""
-        left = self._fill("".join(self._buffer))
-        self._buffer.clear()
-        if not left:
+        taken = await asyncio.to_thread(self._words, self._take())
+        if not taken and not self._pending:
+            # Nothing ready to speak yet: wait for more text before looking again.
+            self._stalled = sum(len(part) for part in self._buffer)
+        self._pending = self._fill(self._pending + taken)
+        if not self._pending:
             await self._burst(final=False)
             return
         # The chunk is full. Finish what it holds and start the next one behind it, rather than
         # growing a prompt that would eventually outgrow the KV cache.
-        self._buffer.insert(0, left)
         await self._burst(final=True)
-        self._rotate()
+        await self._rotate()
+
+    def _take(self) -> str:
+        """The text in the buffer that is ready to speak before the turn ends.
+
+        Complete words only. With normalization on, complete sentences only -- the first one the
+        buffer holds -- or, when a sentence runs past what one chunk holds, everything up to its
+        last word boundary there. The rest stays buffered for later or for the flush.
+        """
+        text = "".join(self._buffer)
+        if self.start.normalize:
+            end = stable_sentence_end(text)
+            if not end and len(text) >= self.model.max_chars:
+                end = _word_end(text, self.model.max_chars) or self.model.max_chars
+        else:
+            end = _word_end(text, len(text))
+        self._buffer = [text[end:]] if end < len(text) else []
+        return text[:end]
+
+    def _words(self, text: str) -> list[Word]:
+        """`text` as words, each with the spoken form the model will read. Blocking: normalizing
+        is CPU work, and the first call loads the grammars."""
+        if not text.strip():
+            return []
+        sentences = preprocess(text, self.model.max_chars, self.start.normalize)
+        return [word for sentence in sentences for word in sentence.words]
 
     async def _finish(self, work: _Work) -> None:
         """Speak everything the turn holds, ending the utterance where its text ends.
@@ -493,21 +590,26 @@ class Session:
         to its own stop and finishes the word it is on. Text longer than one chunk is spoken as
         several, exactly as it would have been had it arrived a piece at a time.
 
-        The chunk is not closed here. A turn ending is the client saying it has run out of
-        words, not the session saying the utterance is over, so where the turn lands on a
-        boundary the next one goes on extending the same generation. A turn that ends mid-phrase
-        leaves the chunk over-generated against its text, and :meth:`_rotate` starts a fresh one.
+        Without the aligner the chunk is not closed here. A turn ending is the client saying it
+        has run out of words, not the session saying the utterance is over, so where the turn
+        lands on a boundary the next one goes on extending the same generation. A turn that ends
+        mid-phrase leaves the chunk over-generated against its text, and :meth:`_rotate` starts a
+        fresh one. With the aligner it is always closed: its aligned carry keeps the next turn
+        continuous, and closing is what times its last words.
         """
-        pending = work.text
+        pending = self._pending + await asyncio.to_thread(self._words, work.text)
+        self._pending = []
         while True:
             pending = self._fill(pending)
             await self._burst(final=True)
             if not pending:
                 break
-            self._rotate()
+            await self._rotate()
+        if self.model.aligner is not None:
+            await self._rotate()
         await self._end_turn()
 
-    def _fill(self, pending: str) -> str:
+    def _fill(self, pending: list[Word]) -> list[Word]:
         """Move as much of `pending` into the growing chunk as it has room for; return the rest.
 
         The chunk and the new text are split together, at the model's own boundaries and to its
@@ -519,14 +621,27 @@ class Session:
         boundary back into words the chunk has already begun speaking, the new text waits for
         the chunk after this one instead.
         """
-        if not pending.strip():
-            return ""
-        text = self._chunk.text
-        pieces = self.model.chunks(f"{text} {pending}" if text else pending)
-        if not pieces[0].startswith(text):
-            return pending.strip()
-        self._chunk.text = pieces[0]
-        return " ".join(pieces[1:])
+        if not pending:
+            return []
+        chunk = self._chunk
+        pieces = self.model.chunks(" ".join(w.normalized for w in chunk.words + pending))
+        room = len(pieces[0].split()) - len(chunk.text.split())
+        if room < 0:
+            return pending
+        taken = 0
+        for word in pending:
+            room -= len(word.normalized.split())
+            if room < 0:
+                break
+            taken += 1
+        if not chunk.words:
+            taken = max(taken, 1)  # one word longer than a whole chunk still has to be said
+        if chunk.alignment is None:
+            chunk.alignment = self.model.alignment(live=self.start.timestamps)
+        if chunk.alignment is not None:
+            chunk.alignment.add_words(pending[:taken])
+        chunk.words.extend(pending[:taken])
+        return pending[taken:]
 
     async def _burst(self, *, final: bool) -> None:
         """Generate the next stretch of the chunk, streaming its codes to the decoder.
@@ -567,7 +682,7 @@ class Session:
                 # further would take the pair further from any prompt the model was trained on,
                 # and it answers that by wandering, so the chunk is closed here instead and the
                 # next words start one of their own behind it.
-                self._rotate()
+                await self._rotate()
 
     async def _prompt_ids(self, chunk: _Chunk, voice: Any, params: Any) -> list[int]:
         """Tokens for this burst, keeping the codes the chunk has already produced.
@@ -629,22 +744,44 @@ class Session:
                 produced += 1
                 self._chunk.codes.append(code)
                 codes.put_nowait(code)
+                if self._chunk.alignment is not None:
+                    self._chunk.alignment.add_codes((code,))
+                    await self._timestamps(self._chunk.alignment.take())
             return produced
         finally:
             # A burst given up on -- one that hit its cap, a cancelled turn, a client that hung
             # up mid-sentence -- leaves the LM marked in flight until its iterator is closed.
             close_on_engine_thread(stream)
 
-    def _rotate(self) -> None:
+    async def _rotate(self) -> None:
         """Close the growing chunk and start the next one behind it.
 
         The finished chunk becomes the continuation context for the one that follows -- its text
         and the codes it was rendered as, together or not at all -- so a chunk boundary threads
-        through the prompt exactly as a burst boundary threads through the codes.
+        through the prompt exactly as a burst boundary threads through the codes. With the
+        aligner it is the chunk's aligned tail instead, and its last words' timings go out.
         """
-        if self._chunk.codes:
-            self._carry = self.model.carry(self._chunk.text, self._chunk.codes)
-        self._chunk = _Chunk()
+        chunk, self._chunk = self._chunk, _Chunk()
+        if chunk.alignment is None:
+            if chunk.codes:
+                self._carry = self.model.carry(chunk.text, chunk.codes)
+            return
+        timed = await asyncio.to_thread(chunk.alignment.finish)
+        await self._timestamps(chunk.alignment.take())
+        if chunk.codes:
+            complete = len(timed) == len(chunk.words)
+            self._carry = self.model.aligned_carry(timed, chunk.codes, complete=complete)
+        self._spoken_codes += len(chunk.codes)
+
+    async def _timestamps(self, timed: list[Any]) -> None:
+        """Send the open chunk's newly timed words, if the client asked for timestamps."""
+        if timed and self.start.timestamps:
+            offset = self._spoken_codes / TOKEN_RATE
+            words = [
+                WordTimestamp(t.word.original, offset + t.start_ms / 1000, offset + t.end_ms / 1000)
+                for t in timed
+            ]
+            await self._emit(wire.Timestamps(timestamps=wire.WordTimings.of(words)))
 
     # ------------------------------------------------------------------ the turn's decoder
 
@@ -687,6 +824,8 @@ class Session:
             await asyncio.gather(self._decoding, return_exceptions=True)
             self._decoding = None
             self._queue = None
+        if self._chunk.alignment is not None:
+            self._chunk.alignment.close()
         self._chunk = _Chunk()
 
     async def _decode(self, decoder: Any, codes: asyncio.Queue[int | None]) -> None:
@@ -777,6 +916,8 @@ class Session:
             reference=reference,
             sampling=self.start.sampling,
             response_format=self.response_format,
+            normalize=self.start.normalize,
+            timestamps=self.start.timestamps,
         )
 
     # ------------------------------------------------------------------ outbound frames
@@ -878,6 +1019,31 @@ def _check_reference_length(seconds: float) -> None:
         )
 
 
+def _word_end(text: str, limit: int) -> int:
+    """Length of the longest prefix of ``text[:limit]`` that ends a word outside any ``[tag]``,
+    or 0 when there is none."""
+    for index in range(min(limit, len(text)) - 1, -1, -1):
+        if text[index].isspace() and tags_closed(text[: index + 1]):
+            return index + 1
+    return 0
+
+
+def _aligned_chunks(text: str) -> list[str]:
+    """The aligned chunk boundary, as a split: the first piece ends at the last
+    sentence end between :data:`ALIGNED_SOFT_CHARS` and :data:`ALIGNED_MAX_CHARS`, or failing
+    that at the last word boundary before the maximum."""
+    text = text.strip()
+    if len(text) < ALIGNED_SOFT_CHARS:
+        return [text]
+    end = last_sentence_end(text[:ALIGNED_MAX_CHARS])
+    if end < ALIGNED_SOFT_CHARS:
+        if len(text) <= ALIGNED_MAX_CHARS:
+            return [text]
+        end = _word_end(text, ALIGNED_MAX_CHARS) or ALIGNED_MAX_CHARS
+    head, tail = text[:end].strip(), text[end:].strip()
+    return [head, tail] if tail else [head]
+
+
 async def _next_codes(codes: asyncio.Queue[int | None]) -> tuple[list[int], bool]:
     """Everything waiting on `codes`, and whether the turn has finished generating.
 
@@ -942,6 +1108,7 @@ async def stream(ws: WebSocket) -> None:
                     continue
                 try:
                     engine.check_voice(frame.start_context.voice)
+                    engine.check_timestamps(frame.start_context.timestamps)
                     session = Session(engine=engine, start=frame.start_context, out=out)
                     await session.open()
                 except Exception as exc:  # noqa: BLE001 - a rejected start is recoverable

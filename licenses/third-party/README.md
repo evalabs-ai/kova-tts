@@ -13,6 +13,8 @@ An individual distribution may use only a subset of these components.
 | snake | [MIT](snake-LICENSE.txt) | SnakeBeta activation |
 | julius | [MIT](julius-LICENSE.txt) | Low-pass filtering, via BigVGAN |
 | WavLM code | [MIT](wavlm-code-LICENSE.txt) | Upstream Microsoft unilm code |
+| NeMo text processing | [Apache 2.0](nemo-text-processing-LICENSE.txt) | English text-normalization grammars |
+| ctc-forced-aligner | [BSD 2-Clause](ctc-forced-aligner-LICENSE.txt) | CTC forced-alignment kernel, ported to numba |
 | WavLM Hub model's linked terms | [CC BY-SA 3.0](wavlm-hub-linked-LICENSE.txt) | Terms linked by the separately downloaded model's card |
 
 The WavLM code license and the license linked from the

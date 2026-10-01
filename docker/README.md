@@ -150,6 +150,7 @@ About 6 GB of VRAM covers the 1B model, the codec and a generation, so any 8 GB 
 |---|---|
 | `KOVA_MODEL_PATH` | LM directory, or a Hub repo id |
 | `KOVA_CODEC_PATH` | codec checkpoint file |
+| `KOVA_ALIGNMENT_PATH` | word-aligner checkpoint file; optional, for word timestamps |
 | `KOVA_WAVLM_PATH` | WavLM-large directory; only read when encoding audio |
 | `KOVA_LORA_DIR` | directory of LoRA voices, one subdirectory each |
 | `KOVA_HUB_REPO` | Hub repository anything unset falls back to |

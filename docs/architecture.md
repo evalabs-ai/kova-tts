@@ -338,6 +338,16 @@ the failure mode is a lost carry rather than a crash.
 Carried codes are prompt-only. They are never decoded twice, so the audio runs straight through
 the boundary.
 
+### With the aligner: larger chunks, a tail carry
+
+Everything above is the rule *without* the word aligner. With it loaded (see
+[below](#text-normalization-and-word-timestamps)) the carry no longer has to be a whole chunk:
+the aligner says which frames each word was spoken in, so a chunk hands on just its last
+`CARRY_SECONDS = 5` seconds — the words that end in that window, and the codes from the first of
+them on — and text and codes still match. With the carry
+bounded by time, chunks grow to `ALIGNED_SEGMENT_CHARS = 300` (the WebSocket session closes one
+at a sentence end past 200 characters, or at a word boundary at 400), so there are fewer joins.
+
 ## LoRA voices
 
 Adapters are peft LoRAs on the attention projections only (`q_proj`, `k_proj`, `v_proj`,
@@ -437,22 +447,25 @@ they take a steady streaming window from 23 ms to 5 ms, and streaming decode fro
   torch path to 1e-6 in float32, and float16 decode fidelity is unchanged.
   `KOVA_CODEC_TRITON=0` forces the torch path.
 
+## Text normalization and word timestamps
+
+Two stages around the model, each in its own package:
+
+- **`kova_tts.normalization`** turns written text into spoken text — `"$12.50"` becomes "twelve
+  dollars fifty cents" — with the English NeMo grammars in `normalization/nemo/`, and keeps a
+  word-by-word map from each original word to its spoken form. It needs pynini, the `normalize`
+  [extra](installation.md#extras); without it text is spoken as written. `normalize=False` turns
+  it off per call.
+- **`kova_tts.alignment`** times each word against the codes the model generated. A small CTC
+  model (`alignment.pt`) reads the codes — not the audio — and a forced alignment places the
+  spoken words' letters on them. While a chunk is still generating it commits only the words it
+  is sure of: the best-scoring prefix of the word list, confirmed by two rounds in a row and held
+  back near the end of the audio. The word map then reports each timing against the word as it
+  was written.
+
 ## Deliberate non-features
 
 Each of these is a decision. None of them is a bug.
-
-### No text normalization
-
-`1997`, `Dr.`, `$40` and `10:30` reach the model exactly as typed. There is no number expander,
-no abbreviation table, no G2P front end. The model was trained on text, and a normalizer that
-guesses wrong ("Dr." → "doctor" in "Dr. Martin Luther King Dr.") is worse than no normalizer,
-because it is invisible from the outside. Normalize in your own layer, where you know the domain.
-
-### No word or phoneme timestamps
-
-The model emits audio codes; there is no alignment anywhere in the pipeline to read one off. You
-know the total duration (`len(codes) / 80`) and, when streaming, when each 390 ms window landed
-— and that is all. Force-align the output with a separate tool if you need word times.
 
 ### No concurrency in the server
 

@@ -48,10 +48,11 @@ from kova_codec.constants import (
     TOKEN_RATE,
 )
 from kova_tts import audio, paths
+from kova_tts.alignment.aligner import STRIDE_MS, CommittedWord
 from kova_tts.engine.decoder import decode_all
 from kova_tts.engine.generator import DEFAULT_MAX_CACHE_LEN
 from kova_tts.engine.tts import MAX_CARRY_CODES, MAX_SEGMENT_CHARS, KovaTTS
-from kova_tts.engine.types import CLONE_SAMPLING, TTS_SAMPLING, AudioFrame, Voice
+from kova_tts.engine.types import CLONE_SAMPLING, TTS_SAMPLING, AudioFrame, Voice, WordTimestamp
 from kova_tts.paths import MissingArtifact
 from kova_tts.prompt import parse_audio_tokens
 from kova_tts.server import protocol as wire
@@ -215,6 +216,11 @@ class StubEncoder:
         return torch.arange(samples.size // hop, dtype=torch.long) % 8192
 
 
+def stub_timestamps(text: str) -> list[WordTimestamp]:
+    """One word a second: what the stub's aligner would report."""
+    return [WordTimestamp(word, float(i), i + 0.5) for i, word in enumerate(text.split())]
+
+
 class StubTTS:
     """A :class:`~kova_tts.engine.tts.KovaTTS` that makes tones instead of speech.
 
@@ -244,6 +250,8 @@ class StubTTS:
         self.clone_preroll = ws_module.PREROLL_CODES
         self._voices = list(voices or ["some-voice", "another-voice"])
         self._fail = fail
+        #: No aligner unless a test gives it one: timestamps are refused, chunks are small.
+        self.aligner = None
         self.calls: list[dict] = []
         self.prompts: list[dict] = []
         self._built = ""
@@ -264,16 +272,17 @@ class StubTTS:
             raise MissingArtifact(f"No voice named {name!r}. Available: {', '.join(self._voices)}.")
         return Voice(name=name, lora_path=Path("adapters") / name)
 
-    def generate(self, text, voice=None, *, params=None) -> np.ndarray:
-        self._record(text, voice, params)
+    def generate(self, text, voice=None, *, params=None, normalize=True, timestamps=False):
+        self._record(text, voice, params, normalize)
         self.entered.set()
         self.release.wait(timeout=10)
         if self._fail is not None:
             raise self._fail
-        return _tone(speech_samples(text))
+        wav = _tone(speech_samples(text))
+        return (wav, stub_timestamps(text)) if timestamps else wav
 
-    def stream(self, text, voice=None, *, params=None):
-        self._record(text, voice, params)
+    def stream(self, text, voice=None, *, params=None, normalize=True, timestamps=False):
+        self._record(text, voice, params, normalize)
         wav = _tone(speech_samples(text))
         self.entered.set()
         self.release.wait(timeout=10)
@@ -282,12 +291,13 @@ class StubTTS:
         for start in range(0, wav.size, FRAME_SAMPLES):
             yield AudioFrame(wav[start : start + FRAME_SAMPLES], OUTPUT_SAMPLE_RATE)
         # The real stream always ends with a final frame, empty or not.
-        yield AudioFrame(np.zeros(0, dtype=np.float32), OUTPUT_SAMPLE_RATE, is_final=True)
+        words = tuple(stub_timestamps(text)) if timestamps else ()
+        yield AudioFrame(np.zeros(0, dtype=np.float32), OUTPUT_SAMPLE_RATE, True, words)
 
-    def _record(self, text, voice, params) -> None:
+    def _record(self, text, voice, params, normalize=True) -> None:
         if voice is not None:
             self.voice(voice)  # the real facade resolves the voice before it generates anything
-        self.calls.append({"text": text, "voice": voice, "params": params})
+        self.calls.append({"text": text, "voice": voice, "params": params, "normalize": normalize})
 
     # -- the surface a session drives ----------------------------------------------------
 
@@ -688,7 +698,7 @@ FLUSH_TEXTS = (
 #: Enough text to make the session speak without being asked, in one send_text. Long enough that
 #: the burst it triggers spans several decoder windows, so a test can wait for audio rather than
 #: for a timeout.
-UNPROMPTED_TEXT = "The session speaks this much without being asked for it first."
+UNPROMPTED_TEXT = "The session speaks this much without being asked for it first!"
 
 #: What a reference clip says, for the tests that clone.
 REFERENCE_TEXT = "This is the reference recording, spoken plainly."
@@ -1170,7 +1180,9 @@ class TestWebSocketScheduling:
         assert len(paragraph) > 2 * ws_module.MIN_BUFFER_CHARS
         _, payload, _ = run_session(client, [paragraph])
 
-        chunks = [prompt["chunk"] for prompt in tts.prompts]
+        # A chunk is extended by several bursts as its sentences arrive; keep each one's last.
+        bursts = [prompt["chunk"] for prompt in tts.prompts]
+        chunks = [c for c, n in zip(bursts, [*bursts[1:], ""], strict=True) if not n.startswith(c)]
         assert len(chunks) > 1
         assert all(len(chunk) <= 200 for chunk in chunks), chunks
         assert " ".join(chunks) == paragraph
@@ -1711,3 +1723,83 @@ class TestCreateApp:
         schema = client.get("/openapi.json").json()
         assert "/v1/tts" in schema["paths"]
         assert "/v1/tts/stream" in schema["paths"]
+
+
+# ------------------------------------------------------------------------------- word timestamps
+
+
+class EvenAligner:
+    """An aligner that gives every word an equal share of the codes, and never commits early.
+
+    Real alignment is :mod:`tests.test_alignment`'s business; this is enough to drive the
+    plumbing -- when timings are sent, against which words, and what a chunk carries.
+    """
+
+    def align(self, words, codes, **_):
+        return []
+
+    def align_full(self, words, codes, floor_frame=0):
+        share = codes.numel() / len(words)
+        return [
+            CommittedWord(i, w, int(i * share * STRIDE_MS), int((i + 1) * share * STRIDE_MS), 0.0)
+            for i, w in enumerate(words)
+        ]
+
+
+@pytest.fixture
+def aligned(tts):
+    tts.aligner = EvenAligner()
+    return tts
+
+
+class TestTimestamps:
+    def test_the_whole_file_comes_back_as_json_beside_the_timings(self, client, aligned):
+        body = client.post("/v1/tts", json={"text": "Hello there world.", "timestamps": True})
+        assert body.status_code == 200
+        reply = body.json()
+        assert reply["timestamps"]["words"] == ["Hello", "there", "world."]
+        assert base64.b64decode(reply["audio"])[:4] == b"RIFF"
+
+    def test_the_stream_sends_timestamps_events(self, client, aligned):
+        with client.stream(
+            "POST", "/v1/tts/stream", json={"text": "Hello there.", "timestamps": True}
+        ) as response:
+            body = "".join(response.iter_text())
+        assert "event: timestamps" in body
+        assert '"words":["Hello","there."]' in body
+
+    def test_without_an_aligner_timestamps_are_refused_up_front(self, client):
+        body = client.post("/v1/tts", json={"text": "Hello.", "timestamps": True})
+        assert body.status_code == 422
+        assert "aligner" in body.json()["message"]
+
+    def test_a_session_without_an_aligner_refuses_them_at_start(self, client):
+        with client.websocket_connect("/v1/ws") as ws:
+            ws.send_json({"start_context": {"timestamps": True}})
+            assert "aligner" in ws.receive_json()["error"]
+
+    def test_every_word_of_a_turn_is_timed_before_its_flush_completes(self, client, aligned):
+        turns = ["The first turn is short. ", "And the second follows it, 55 words later!"]
+        seen: list[list[str]] = []
+        with client.websocket_connect("/v1/ws") as ws:
+            ws.send_json({"start_context": {"timestamps": True, "normalize": False}})
+            assert ws.receive_json()["context_started"]["timestamps"] is True
+            for index, text in enumerate(turns):
+                ws.send_json({"send_text": text})
+                ws.send_json({"flush": True, "flush_id": str(index)})
+                words: list[str] = []
+                starts: list[float] = []
+                while "flush_completed" not in (frame := ws.receive_json()):
+                    if "timestamps" in frame:
+                        words += frame["timestamps"]["words"]
+                        starts += frame["timestamps"]["start_seconds"]
+                seen.append(words)
+                assert starts == sorted(starts)
+            ws.send_json({"close_context": True})
+            _drain(ws)
+        assert seen == [text.split() for text in turns]
+
+    def test_a_flush_closes_the_chunk_and_carries_its_tail(self, client, aligned):
+        run_session(client, ["One short turn. ", "And another."], normalize=False)
+        second = next(p for p in aligned.prompts if p["chunk"].startswith("And"))
+        assert second["carry"].text == "One short turn."
