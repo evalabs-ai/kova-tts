@@ -82,10 +82,12 @@ server release**. See [Performance and deployment](#-performance-and-deployment)
 
 > 📝 *"Originally, we built our own voice model for internal use because we couldn't find one that made the unit economics work. Over time, we realized the technology had potential far beyond our own needs. So, we decided to make it public, hoping it could unlock entirely new categories of businesses and experiences that simply haven't been possible at current industry pricing."*
 
-Listen: [Mira](assets/samples/mira.mp3) ·
-[Ash](assets/samples/ash.mp3) ·
-[Owen](assets/samples/owen.mp3) ·
-[Cal](assets/samples/cal.mp3)
+Listen:
+
+
+
+https://github.com/user-attachments/assets/e2465db7-a695-4534-96a5-f9d237fdcc33
+
 
 > Note: these voices are from our production API, which we do not have permission to release. The demo provides some publicly available voices as reference.
 
