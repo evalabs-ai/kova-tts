@@ -220,6 +220,12 @@ body, gradio-app, .gradio-container, .main, .contain {{
   color: var(--kova-ink-2); font-size: 14px;
 }}
 #kova-banner p {{ margin: 4px 0; }}
+/* Gradio's code style follows its own dark mode, which turns these into black boxes. */
+#kova-banner code {{
+  background: rgba(42, 40, 38, 0.07) !important; color: var(--kova-ink) !important;
+  border: none !important; border-radius: 6px; padding: 1px 6px;
+  font-family: var(--kova-mono); font-size: 0.92em;
+}}
 
 /* Every Gradio block inside our cards goes flat: the cards draw the only borders. */
 #kova-main .block, #kova-main .form, #kova-main .gr-group, #kova-main .styler {{
