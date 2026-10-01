@@ -86,8 +86,12 @@ def build_theme() -> gr.themes.Base:
 
     The fonts are the part only a theme can set everywhere, including inside the components the
     stylesheet never names.
+
+    The page has one palette. Gradio switches to its dark values whenever the system is in dark
+    mode, and every one the theme left at Gradio's default -- labels, block titles, borders --
+    came out light grey on the cream page. So each dark value is the light one.
     """
-    return gr.themes.Base(
+    theme = gr.themes.Base(
         primary_hue=gr.themes.colors.teal,
         neutral_hue=gr.themes.colors.stone,
         radius_size=gr.themes.sizes.radius_lg,
@@ -95,35 +99,26 @@ def build_theme() -> gr.themes.Base:
         font_mono=[gr.themes.GoogleFont("JetBrains Mono"), "ui-monospace", "monospace"],
     ).set(
         body_background_fill="#f5f1ea",
-        body_background_fill_dark="#f5f1ea",
         body_text_color="#2a2826",
-        body_text_color_dark="#2a2826",
         body_text_color_subdued="#6b6862",
-        body_text_color_subdued_dark="#6b6862",
         background_fill_primary="#faf8f4",
-        background_fill_primary_dark="#faf8f4",
         background_fill_secondary="#f1ece3",
-        background_fill_secondary_dark="#f1ece3",
         border_color_primary="#d9d2c7",
-        border_color_primary_dark="#d9d2c7",
         block_background_fill="transparent",
-        block_background_fill_dark="transparent",
         input_background_fill="#ffffff",
-        input_background_fill_dark="#ffffff",
         color_accent="#0f8f86",
         color_accent_soft="#e6eee8",
-        color_accent_soft_dark="#e6eee8",
         slider_color="#0f8f86",
-        slider_color_dark="#0f8f86",
         button_primary_background_fill="#0b746c",
-        button_primary_background_fill_dark="#0b746c",
         button_primary_background_fill_hover="#08453f",
-        button_primary_background_fill_hover_dark="#08453f",
         button_primary_text_color="#ffffff",
-        button_primary_text_color_dark="#ffffff",
         link_text_color="#0b746c",
-        link_text_color_dark="#0b746c",
     )
+    for name in [n for n in vars(theme) if n.endswith("_dark")]:
+        light = name.removesuffix("_dark")
+        if hasattr(theme, light):
+            setattr(theme, name, getattr(theme, light))
+    return theme
 
 
 def player_js(*, stream_path: str = STREAM_PATH, model_loaded: bool = False) -> str:
