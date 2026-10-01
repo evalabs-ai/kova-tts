@@ -1,5 +1,5 @@
 <div align="center">
-  <a href="https://kova.ai"><img src="assets/kova-logo-text-ink.svg" alt="Kova" width="100%"></a>
+  <a href="https://kova.ai"><img src="assets/kova-logo-text-ink.svg" alt="Kova" width="320"></a>
   <br>
   <a href="https://huggingface.co/kova-ai/kova-tts-1"><img src="assets/badges/huggingface.svg" alt="Hugging Face"></a>
   <a href="https://kova.ai"><img src="assets/badges/website.svg" alt="Website"></a>
@@ -82,10 +82,10 @@ server release**. See [Performance and deployment](#-performance-and-deployment)
 
 > 📝 *"Originally, we built our own voice model for internal use because we couldn't find one that made the unit economics work. Over time, we realized the technology had potential far beyond our own needs. So, we decided to make it public, hoping it could unlock entirely new categories of businesses and experiences that simply haven't been possible at current industry pricing."*
 
-Listen: [Mira](https://huggingface.co/kova-ai/kova-tts-1/resolve/main/assets/kova-samples/mira_snippet.mp3) ·
-[Ash](https://huggingface.co/kova-ai/kova-tts-1/resolve/main/assets/kova-samples/ash_snippet.mp3) ·
-[Owen](https://huggingface.co/kova-ai/kova-tts-1/resolve/main/assets/kova-samples/owen_snippet.mp3) ·
-[Cal](https://huggingface.co/kova-ai/kova-tts-1/resolve/main/assets/kova-samples/cal_snippet.mp3)
+Listen: [Mira](assets/samples/mira.mp3) ·
+[Ash](assets/samples/ash.mp3) ·
+[Owen](assets/samples/owen.mp3) ·
+[Cal](assets/samples/cal.mp3)
 
 > Note: these voices are from our production API, which we do not have permission to release. The demo provides some publicly available voices as reference.
 
