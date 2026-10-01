@@ -79,7 +79,7 @@ only. Everywhere else it comes from conda-forge or is built against Homebrew's O
 | Platform | Install |
 |---|---|
 | Linux, x86-64 | `uv sync --extra normalize` (or `pip install "kova-tts[normalize]"`) |
-| macOS (Apple Silicon or Intel) | `brew install openfst`, then `CFLAGS="-I$(brew --prefix)/include" LDFLAGS="-L$(brew --prefix)/lib" uv sync --extra normalize` |
+| macOS (Apple Silicon or Intel) | `brew install openfst`, then `CPPFLAGS="-I$(brew --prefix)/include" LDFLAGS="-L$(brew --prefix)/lib" uv sync --extra normalize` |
 | Linux, ARM | `conda install -c conda-forge pynini`, then `pip install "kova-tts[normalize]"` in that environment |
 | Windows | `conda install -c conda-forge pynini`, then `pip install "kova-tts[normalize]"` in that environment |
 
