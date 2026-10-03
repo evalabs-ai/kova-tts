@@ -30,6 +30,12 @@ We trained Kova TTS 1 specifically for audiobook reading: warm, natural, and ple
   <em>What it costs us to run Kova on rented GPUs, compared with API prices featured on Artificial Analysis.</em>
 </div>
 
+<div align="center">
+  <img src="assets/kova-tts-size-benchmark.png" alt="Kova TTS 1 against larger voice-cloning models: accuracy and naturalness by model size" width="100%">
+  <br>
+  <em>Zero-shot voice cloning on Seed-TTS-eval English, all models run in the same harness with their default settings.</em>
+</div>
+
 ---
 
 ## 📖 Overview
