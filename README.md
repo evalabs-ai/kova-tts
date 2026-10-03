@@ -280,3 +280,13 @@ See [LICENSE-WEIGHTS](LICENSE-WEIGHTS) for the model repository links.
 Built with [Kova TTS](https://kova.ai/text-to-speech). Built with Llama.
 
 📬 License questions: legal@evalabs.ai.
+
+## 👋 Team
+
+Built in Montréal by the [Kova team](https://kova.ai/team).
+
+| Team member | Connect |
+| --- | --- |
+| Ryan Reszetnik | [LinkedIn](https://www.linkedin.com/in/ryan-reszetnik/) |
+| Henri-Charles Machalani | [X](https://x.com/hmachalani) · [LinkedIn](https://www.linkedin.com/in/henri-charles-machalani/) |
+| Olivier Déry-Prévost | [X](https://x.com/Zupooli) · [LinkedIn](https://www.linkedin.com/in/olivierdp/) |
