@@ -67,6 +67,7 @@ nav:
   - Reference:
       - Architecture: architecture.md
       - Docker: docker.md
+      - Hugging Face sync: huggingface-sync.md
 
 extra:
   social:
